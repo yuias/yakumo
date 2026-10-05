@@ -1,32 +1,25 @@
-# やくも (Yakumo) — EN↔JA Voice Translator
+# やくも (Yakumo) — EN↔JA 音声翻訳
 
-An on-device English↔Japanese voice translator for Android. By default, speech
-recognition and machine translation run **fully offline** after a one-time model
-download, and speech is spoken back through the OS text-to-speech engine. An
-opt-in online mode can instead route a turn through a cloud speech-to-speech
-model — OpenAI Realtime or Gemini Live Translate. The inference core is written
-in Rust and exposed to a Jetpack Compose UI through UniFFI.
+Android 向けの英語↔日本語音声翻訳アプリ。既定では、初回にモデルをダウンロードした後は音声認識と機械翻訳が**完全オフライン**で動き、訳文は OS のテキスト読み上げ(TTS)エンジンで発話する。オプトインのオンラインモードでは、1 ターンをクラウドの speech-to-speech モデル(OpenAI Realtime または Gemini Live Translate)に任せることもできる。推論の中核は Rust で書かれており、UniFFI 経由で Jetpack Compose の UI から呼び出す。
 
-## Features
+## 機能
 
-- Offline ASR → translation → speech pipeline, no network at inference time
-- Automatic language detection (SenseVoice multilingual model)
-- VAD-based turn segmentation with tunable thresholds
-- Opt-in low-latency **streaming** English ASR (Nemotron)
-- Spoken output via the OS TTS engine, with variable playback rate
-- Optional **online mode** (OpenAI Realtime or Gemini Live Translate
-  speech-to-speech) — see below
+- オフラインの ASR → 翻訳 → 発話パイプライン(推論時にネットワーク不要)
+- 言語の自動判定(SenseVoice 多言語モデル)
+- VAD によるターン分割(しきい値は調整可能)
+- オプトインの低遅延**ストリーミング**英語 ASR(Nemotron)
+- OS の TTS エンジンによる発話(再生速度は可変)
+- 任意の**オンラインモード**(OpenAI Realtime または Gemini Live Translate による speech-to-speech)— 後述
 
-## Building
+## ビルド
 
-### Prerequisites
+### 前提
 
-Native libraries are compiled/fetched during the Gradle build, so the toolchain
-is required (the `.so` files are not committed):
+ネイティブライブラリは Gradle ビルド中にコンパイル/取得するため(`.so` はコミットしていない)、以下のツールチェーンが必要:
 
-- **JDK 17+** (the reference setup uses Temurin 21)
-- **Android SDK**: platform `android-36`, build-tools, and **NDK 27.2.12479018**
-- **Rust** (stable) with the Android targets:
+- **JDK 17 以上**(参照環境は Temurin 21)
+- **Android SDK**: platform `android-37`、build-tools、**NDK 27.2.12479018**
+- **Rust**(stable)と Android ターゲット:
   ```sh
   rustup target add aarch64-linux-android x86_64-linux-android
   ```
@@ -35,47 +28,35 @@ is required (the `.so` files are not committed):
   cargo install cargo-ndk
   ```
 
-### Build & install
+### ビルドとインストール
 
 ```sh
 cd android
 ./gradlew assembleDebug
 ```
 
-The build wires two extra tasks ahead of the usual jniLibs merge:
+通常の jniLibs マージの前に、2 つのタスクが追加で走る:
 
-1. **`fetchSherpaPrebuilt`** — downloads the sherpa-onnx prebuilt `.so` (cached in
-   the Gradle user home) and extracts them into `jniLibs/<abi>/`.
-2. **`cargoBuildRustCore`** — cross-compiles `rust/core` with cargo-ndk into
-   `jniLibs/<abi>/libtranslatecore.so` (must run after the fetch, because
-   `build.rs` links against `libsherpa-onnx-c-api.so`).
+1. **`fetchSherpaPrebuilt`** — sherpa-onnx のビルド済み `.so` をダウンロードし(Gradle ユーザーホームにキャッシュ)、`jniLibs/<abi>/` に展開する。
+2. **`cargoBuildRustCore`** — `rust/core` を cargo-ndk でクロスコンパイルし、`jniLibs/<abi>/libtranslatecore.so` を生成する。`build.rs` が `libsherpa-onnx-c-api.so` にリンクするため、fetch の後に実行する必要がある。
 
-Both declare inputs/outputs, so they are skipped when nothing changed. Supported
-ABIs are **arm64-v8a** (devices) and **x86_64** (emulator).
+どちらも入出力を宣言しているので、変更がなければスキップされる。対応 ABI は **arm64-v8a**(実機)と **x86_64**(エミュレータ)。
 
-The APK lands at `android/app/build/outputs/apk/debug/app-debug.apk`. Install it
-with `adb install` (or your Android CLI of choice), launch the app, and use
-**Settings → Download all models** before the first translation. The experimental
-streaming ASR model (`asr_stream`) is large and English-only, so it is excluded
-from this bulk download and fetched separately from its own button under
-**Settings → Experimental**.
+APK は `android/app/build/outputs/apk/debug/app-debug.apk` に出力される。`adb install`(または任意の Android CLI)でインストールして起動し、最初の翻訳の前に **Settings → Download all models** を実行する。実験的なストリーミング ASR モデル(`asr_stream`)はサイズが大きく英語専用なので、この一括ダウンロードには含まれず、**Settings → Experimental** にある専用ボタンから個別に取得する。
 
-### Release builds
+### リリースビルド
 
-Signed release APKs (keystore setup, local signing, and the tag-driven GitHub
-Actions workflow) are covered separately in
-[README.RELEASE.md](README.RELEASE.md).
+署名付きリリース APK(キーストアの準備、ローカル署名、タグ駆動の GitHub Actions ワークフロー)は [README.RELEASE.md](README.RELEASE.md) にまとめてある。
 
-### Regenerating UniFFI bindings
+### UniFFI バインディングの再生成
 
-The generated Kotlin bindings (`uniffi/translatecore/translatecore.kt`) are
-committed. Regenerate them only when the Rust public API changes:
+生成済みの Kotlin バインディング(`uniffi/translatecore/translatecore.kt`)はコミットしてある。再生成が必要なのは Rust の公開 API を変えたときだけ:
 
 ```powershell
 pwsh rust/build-android.ps1
 ```
 
-## Architecture at a glance
+## アーキテクチャ概要
 
 ```
 Kotlin / Compose (app/)        UI, AudioRecord capture, OS TTS, model provisioning, settings
@@ -87,64 +68,37 @@ Rust core (rust/core/)         pipeline orchestration, ASR/MT via FFI
 Native libs (jniLibs/)         sherpa-onnx + onnxruntime, libtranslatecore.so
 ```
 
-- **Capture** stays in Kotlin (`AudioRecord`); **playback** uses the OS
-  `TextToSpeech` engine. Rust handles pure conversion and inference, which keeps
-  it testable.
-- **Translation** runs NLLB ONNX via the `ort` crate, which `dlopen`s the
-  `libonnxruntime.so` already bundled with sherpa-onnx.
+- **録音**は Kotlin 側(`AudioRecord`)に置き、**再生**は OS の `TextToSpeech` エンジンを使う。Rust は純粋な変換と推論だけを担うので、テストしやすい。
+- **翻訳**は `ort` crate で NLLB の ONNX モデルを実行する。`ort` は sherpa-onnx に同梱の `libonnxruntime.so` を `dlopen` して使う。
 
-The full picture — engine abstraction, VAD/endpoint knobs, model provisioning,
-and the FFI conventions — is in [docs/architecture.md](docs/architecture.md).
+エンジンの抽象化、VAD/エンドポイントのパラメータ、モデル配布、FFI の規約などの全体像は [docs/architecture.md](docs/architecture.md) を参照。
 
-## Models
+## モデル
 
-Models are **not** bundled in the APK. They are downloaded on first use from the
-manifest at `android/app/src/main/assets/models.json` into the app's internal
-storage (required because the NDK's raw `open()` is denied on external storage on
-some OEMs).
+モデルは APK に**同梱しない**。初回使用時に `android/app/src/main/assets/models.json` のマニフェストに従って、アプリの内部ストレージにダウンロードする(一部の OEM では NDK の生の `open()` が外部ストレージで拒否されるため、内部ストレージが必須)。
 
-| ID | Model | Role | Source | Approx. size |
+| ID | モデル | 役割 | 配布元 | おおよそのサイズ |
 |---|---|---|---|---|
-| `vad` | Silero VAD | Voice activity detection / turn segmentation | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) | ~2 MB |
-| `asr` | sherpa-onnx SenseVoice int8 (zh-en-ja-ko-yue) | ASR + language ID | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) | ~230 MB |
-| `nllb` | NLLB-200-distilled-600M (ONNX, quantized, merged decoder) | Translation | [Xenova on HF](https://huggingface.co/Xenova/nllb-200-distilled-600M) | ~865 MB (encoder + decoder + tokenizer) |
-| `asr_stream` | sherpa-onnx Nemotron streaming EN 0.6B int8 | Experimental low-latency EN ASR | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) | ~464 MB |
+| `vad` | Silero VAD | 音声区間検出 / ターン分割 | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) | ~2 MB |
+| `asr` | sherpa-onnx SenseVoice int8 (zh-en-ja-ko-yue) | ASR + 言語判定 | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) | ~230 MB |
+| `nllb` | NLLB-200-distilled-600M(ONNX、量子化、merged decoder) | 翻訳 | [Xenova on HF](https://huggingface.co/Xenova/nllb-200-distilled-600M) | ~865 MB(encoder + decoder + tokenizer) |
+| `asr_stream` | sherpa-onnx Nemotron streaming EN 0.6B int8 | 実験的な低遅延英語 ASR | [k2-fsa releases](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) | ~464 MB |
 
-SenseVoice (`asr`) is the default recognizer: it handles both EN and JA and
-reports a language tag used for automatic direction detection. The streaming
-Nemotron model (`asr_stream`) is an opt-in alternative that trades that coverage
-for live, low-latency partials — it is **English-only** and emits no language
-tag, so it suits the EN→JA flow only and is enabled per choice under
-**Settings → Experimental**.
+既定の認識器は SenseVoice(`asr`)。英語と日本語の両方を扱え、翻訳方向の自動判定に使う言語タグも返す。ストリーミングの Nemotron モデル(`asr_stream`)はオプトインの代替で、言語の対応範囲と引き換えに低遅延のライブ途中結果を得られる。ただし**英語専用**で言語タグも出さないため、EN→JA の流れにしか向かない。有効にするかどうかは **Settings → Experimental** で選ぶ。
 
-Spoken output uses the device's own OS TTS engine, so no synthesis model is
-downloaded here. NLLB is multilingual; the in-app language pair is EN↔JA, so only
-those directions are exercised.
+発話には端末の OS TTS エンジンを使うので、音声合成モデルはダウンロードしない。NLLB は多言語モデルだが、アプリ内の言語ペアは EN↔JA なので、使うのはその 2 方向だけ。
 
-## Online mode (optional)
+## オンラインモード(任意)
 
-Offline is the default and needs no account. For lower latency you can opt into
-online translation under **Settings → Online translation** and choose a provider:
+既定はオフラインで、アカウントは不要。より低い遅延が欲しい場合は **Settings → Online translation** でオンライン翻訳を有効にし、プロバイダを選ぶ:
 
-- **OpenAI Realtime** (`gpt-realtime-translate`) — the app mints a short-lived
-  ephemeral token from your key to open the stream.
-- **Gemini Live Translate** (`gemini-3.5-live-translate-preview`) — the key
-  authenticates the WebSocket directly (no token exchange).
+- **OpenAI Realtime**(`gpt-realtime-translate`)— アプリが API キーから短命のエフェメラルトークンを発行し、それでストリームを開く。
+- **Gemini Live Translate**(`gemini-3.5-live-translate-preview`)— キーで WebSocket を直接認証する(トークン交換なし)。
 
-Each provider keeps its own API key, encrypted on-device via Tink AEAD under an
-Android Keystore master key. Paste a key for the selected provider and **Test
-connection** validates the key and network (an ephemeral-token mint for OpenAI, a
-lightweight models call for Gemini). The toggle next to the mic switches the
-running engine; the offline pipeline stays the default. While online, audio is
-streamed to the chosen provider and billed to your key.
+API キーはプロバイダごとに保持し、Android Keystore のマスターキーのもとで Tink AEAD により端末内で暗号化する。選んだプロバイダのキーを貼り付けて **Test connection** を押すと、キーとネットワークを検証する(OpenAI はエフェメラルトークンの発行、Gemini は軽量な models 呼び出し)。マイク横のトグルで実行中のエンジンを切り替える。既定はオフラインのパイプラインのまま。オンライン中は音声が選んだプロバイダに送信され、そのキーに課金される。
 
-Both engines render a turn as the source transcript plus its streaming
-translation and play the translated audio back. A turn is closed by the
-provider's own end-of-turn signal where it sends one (OpenAI), by sentence-final
-punctuation in the translation (needed for Gemini, which streams continuously),
-or after a silent pause you can tune under **Settings → Online translation**
-("Pause to split a turn").
+どちらのエンジンも、1 ターンを原文の書き起こしとストリーミングされる訳文として表示し、翻訳された音声を再生する。ターンの区切りは、プロバイダが終了シグナルを送る場合はそれ(OpenAI)、訳文の文末句読点(継続的にストリームする Gemini で必要)、または無音の間で決まる。無音の長さは **Settings → Online translation** の「Pause to split a turn」で調整できる。
 
-## License
+## ライセンス
 
-TBD.
+未定。
