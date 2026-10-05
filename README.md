@@ -42,7 +42,7 @@ cd android
 
 どちらも入出力を宣言しているので、変更がなければスキップされる。対応 ABI は **arm64-v8a**(実機)と **x86_64**(エミュレータ)。
 
-APK は `android/app/build/outputs/apk/debug/app-debug.apk` に出力される。`adb install`(または任意の Android CLI)でインストールして起動し、最初の翻訳の前に **Settings → Download all models** を実行する。実験的なストリーミング ASR モデル(`asr_stream`)はサイズが大きく英語専用なので、この一括ダウンロードには含まれず、**Settings → Experimental** にある専用ボタンから個別に取得する。
+APK は `android/app/build/outputs/apk/debug/app-debug.apk` に出力される。`adb install`(または任意の Android CLI)でインストールして起動し、最初の翻訳の前に **Settings → Models → Download missing models** を実行する。モデルごとの行から個別にダウンロード・削除もでき、取得済みのモデルは削除してから再ダウンロードする。実験的なストリーミング ASR モデル(`asr_stream`)はサイズが大きく英語専用なので、この一括ダウンロードには含まれず、**Settings → Experimental**(折りたたみ)の中のモデル行から個別に取得する。
 
 ### リリースビルド
 

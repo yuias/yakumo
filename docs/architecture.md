@@ -145,7 +145,8 @@ UI は「自分の言語(Settings で固定)」と「相手の言語(セッシ�
 | `asr_stream` | Nemotron streaming EN 0.6B int8 | 実験的な低遅延 EN ASR | ~464 MB |
 
 `asr_stream` は大きく英語専用なので一括ダウンロードから外し、Settings → Experimental の
-個別ボタンで取得する。
+モデル行で個別に取得する。Settings ではモデルごとに削除もでき(録音中は不可)、削除後も
+ネイティブ側にロード済みのモデルはプロセス再起動まで使われ続ける(アンロード API がないため)。
 
 > **内部ストレージ必須**: 一部 OEM(ColorOS / OxygenOS 等)では NDK の生 `open()` が
 > 外部ストレージ(`Android/data`)で EACCES になる。Java の `File.exists()` は通るのに
