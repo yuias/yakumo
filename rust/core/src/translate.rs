@@ -15,6 +15,7 @@
 //! ~865 MB of ONNX dominates cost, so models are kept resident in a global
 //! `NllbEngine` keyed by `model_dir`.
 
+use ort::session::builder::{AutoDevicePolicy, SessionBuilder};
 use ort::session::{Session, SessionInputValue};
 use ort::value::{DynValue, Tensor};
 use std::borrow::Cow;
@@ -29,8 +30,7 @@ const HEAD_DIM: i64 = 64;
 
 pub fn smoke(ort_dylib: &str, model_path: &str) -> Result<String, String> {
     init_ort(ort_dylib)?;
-    let session = Session::builder()
-        .map_err(|e| format!("builder: {e}"))?
+    let session = session_builder()?
         .commit_from_file(model_path)
         .map_err(|e| format!("load: {e}"))?;
     let ins: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
@@ -44,6 +44,15 @@ pub fn smoke(ort_dylib: &str, model_path: &str) -> Result<String, String> {
 fn init_ort(ort_dylib: &str) -> Result<(), String> {
     ort::init_from(ort_dylib).map_err(|e| format!("onnxruntime: {e}"))?.commit();
     Ok(())
+}
+
+// ort sets ONNX Runtime's device selection policy to MaxEfficiency (NPU first)
+// on every new builder. Registering the CPU EP does not undo that, so the
+// policy itself is reset to keep NLLB on the CPU it was validated on.
+fn session_builder() -> Result<SessionBuilder, String> {
+    Session::builder()
+        .and_then(|b| b.with_auto_device(AutoDevicePolicy::PreferCPU).map_err(Into::into))
+        .map_err(|e| format!("builder: {e}"))
 }
 
 fn i64_tensor(shape: Vec<i64>, data: Vec<i64>) -> Result<Tensor<i64>, String> {
@@ -107,12 +116,10 @@ impl NllbEngine {
         let dir = Path::new(model_dir);
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json"))
             .map_err(|e| format!("tokenizer: {e}"))?;
-        let encoder = Session::builder()
-            .map_err(|e| e.to_string())?
+        let encoder = session_builder()?
             .commit_from_file(dir.join("encoder_model_quantized.onnx"))
             .map_err(|e| format!("load encoder: {e}"))?;
-        let decoder = Session::builder()
-            .map_err(|e| e.to_string())?
+        let decoder = session_builder()?
             .commit_from_file(dir.join("decoder_model_merged_quantized.onnx"))
             .map_err(|e| format!("load decoder: {e}"))?;
 
