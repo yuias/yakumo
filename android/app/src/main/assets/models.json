@@ -2,6 +2,7 @@
   "models": [
     {
       "id": "vad",
+      "label": "Voice activity detector (Silero)",
       "dir": "silero-vad",
       "checkFile": "silero_vad.onnx",
       "files": [
@@ -10,6 +11,7 @@
     },
     {
       "id": "asr",
+      "label": "Speech recognition (SenseVoice)",
       "dir": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
       "checkFile": "model.int8.onnx",
       "archive": {
@@ -19,6 +21,8 @@
     },
     {
       "id": "asr_stream",
+      "label": "Streaming English ASR (Nemotron)",
+      "approxMb": 464,
       "dir": "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
       "checkFile": "encoder.int8.onnx",
       "archive": {
@@ -28,6 +32,7 @@
     },
     {
       "id": "nllb",
+      "label": "Translation (NLLB-200)",
       "dir": "nllb",
       "checkFile": "decoder_model_merged_quantized.onnx",
       "files": [

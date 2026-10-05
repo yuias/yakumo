@@ -19,7 +19,13 @@ data class ModelSpec(
   val checkFile: String,
   val files: List<FileSpec> = emptyList(),
   val archive: ArchiveSpec? = null,
-)
+  // Human-readable name for Settings; falls back to id.
+  val label: String? = null,
+  // Rough download size shown before the model is fetched; null hides the hint.
+  val approxMb: Int? = null,
+) {
+  val displayName: String get() = label ?: id
+}
 
 @Serializable data class FileSpec(val name: String, val url: String)
 
@@ -51,6 +57,32 @@ object Models {
   fun isPresent(context: Context, id: String): Boolean {
     val s = spec(context, id)
     return File(File(context.filesDir, s.dir), s.checkFile).exists()
+  }
+
+  /**
+   * Bytes currently on disk under the model's directory, including incomplete
+   * files-mode downloads (`*.part`, or some files missing). 0 when the directory
+   * does not exist.
+   */
+  fun sizeOnDisk(context: Context, id: String): Long {
+    val dir = dir(context, id)
+    if (!dir.exists()) return 0L
+    return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+  }
+
+  /**
+   * Removes the model and any download leftovers so the next [ensure] fetches it
+   * again. Blocking — call from an IO thread. The caller must ensure nothing is
+   * downloading or using the model; a model already loaded in native memory keeps
+   * working until process restart.
+   */
+  fun delete(context: Context, id: String) {
+    val s = spec(context, id)
+    File(context.filesDir, s.dir).deleteRecursively()
+    File(context.filesDir, ".staging-$id").deleteRecursively()
+    // Archive mode downloads to "$id-archive" and download() writes ".part" beside it.
+    File(context.cacheDir, "$id-archive").delete()
+    File(context.cacheDir, "$id-archive.part").delete()
   }
 
   /**
