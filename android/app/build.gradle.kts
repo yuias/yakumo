@@ -150,7 +150,7 @@ val cargoBuildRustCore = tasks.register<Exec>("cargoBuildRustCore") {
 // the sherpa-onnx release, fetched at build time rather than committed. They
 // must land in jniLibs before cargoBuildRustCore links libsherpa-onnx-c-api.so
 // (build.rs) and before AGP merges jniLibs into the APK.
-val sherpaVersion = "1.13.2"
+val sherpaVersion = "1.13.8"
 val sherpaLibs = listOf(
     "libsherpa-onnx-c-api.so",
     "libsherpa-onnx-cxx-api.so",

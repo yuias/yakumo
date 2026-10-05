@@ -19,7 +19,7 @@ path = "uniffi-bindgen.rs"
 uniffi = { version = "0.32", features = ["cli"] }
 thiserror = "2"
 # Translation runtime: load-dynamic dlopens the existing libonnxruntime.so at
-# runtime (onnxruntime 1.24, matching the sherpa-bundled lib) — no link/build.
-ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic"] }
+# runtime (onnxruntime 1.28, matching the sherpa-bundled lib) — no link/build.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-28"] }
 # unstable_wasm: pure-Rust regex (no oniguruma C dep) — needed for Android cross-build.
 tokenizers = { version = "0.23", default-features = false, features = ["unstable_wasm"] }

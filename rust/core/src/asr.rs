@@ -91,7 +91,7 @@ mod imp {
     use std::path::Path;
     use std::sync::{Mutex, OnceLock};
 
-    // --- C struct mirrors (sherpa-onnx c-api.h v1.13.2). Order/types must match exactly. ---
+    // --- C struct mirrors (sherpa-onnx c-api.h v1.13.8). Order/types must match exactly. ---
 
     #[repr(C)]
     struct TransducerModelConfig {
@@ -271,7 +271,7 @@ mod imp {
         hr: HomophoneReplacerConfig,
     }
 
-    // Full mirror of SherpaOnnxOfflineRecognizerResult (c-api.h v1.13.2). We read
+    // Full mirror of SherpaOnnxOfflineRecognizerResult (c-api.h v1.13.8). We read
     // `text` and `lang` (SenseVoice fills `lang` with a tag like "<|en|>"); every
     // preceding field must be declared so `lang`'s offset is correct.
     #[repr(C)]
@@ -444,7 +444,7 @@ mod stream_imp {
     use std::path::Path;
     use std::sync::{Mutex, OnceLock};
 
-    // --- C struct mirrors (sherpa-onnx c-api.h v1.13.2). Order/types must match exactly. ---
+    // --- C struct mirrors (sherpa-onnx c-api.h v1.13.8). Order/types must match exactly. ---
 
     #[repr(C)]
     struct OnlineTransducerModelConfig {

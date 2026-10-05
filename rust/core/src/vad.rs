@@ -74,7 +74,7 @@ mod imp {
     use std::path::Path;
     use std::sync::{Mutex, OnceLock};
 
-    // --- C struct mirrors (sherpa-onnx c-api.h v1.13.2). Order/types must match exactly. ---
+    // --- C struct mirrors (sherpa-onnx c-api.h v1.13.8). Order/types must match exactly. ---
 
     #[repr(C)]
     struct SileroVadModelConfig {

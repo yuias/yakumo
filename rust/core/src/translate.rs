@@ -28,19 +28,22 @@ const NUM_HEADS: i64 = 16;
 const HEAD_DIM: i64 = 64;
 
 pub fn smoke(ort_dylib: &str, model_path: &str) -> Result<String, String> {
-    init_ort(ort_dylib);
+    init_ort(ort_dylib)?;
     let session = Session::builder()
         .map_err(|e| format!("builder: {e}"))?
         .commit_from_file(model_path)
         .map_err(|e| format!("load: {e}"))?;
-    let ins: Vec<String> = session.inputs.iter().map(|i| i.name.to_string()).collect();
-    let outs: Vec<String> = session.outputs.iter().map(|o| o.name.to_string()).collect();
+    let ins: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
+    let outs: Vec<String> = session.outputs().iter().map(|o| o.name().to_string()).collect();
     Ok(format!("inputs={ins:?} outputs={outs:?}"))
 }
 
-// ort's environment can only be committed once per process; ignore re-init.
-fn init_ort(ort_dylib: &str) {
-    let _ = ort::init_from(ort_dylib).commit();
+// Loading the dylib is idempotent, but the environment can only be committed
+// once per process, so a re-init's `false` is ignored. A load error is kept:
+// it is how an onnxruntime older than the `api-*` feature floor shows up.
+fn init_ort(ort_dylib: &str) -> Result<(), String> {
+    ort::init_from(ort_dylib).map_err(|e| format!("onnxruntime: {e}"))?.commit();
+    Ok(())
 }
 
 fn i64_tensor(shape: Vec<i64>, data: Vec<i64>) -> Result<Tensor<i64>, String> {
@@ -116,7 +119,7 @@ impl NllbEngine {
         // Detect layer count from the cache inputs and confirm this is actually
         // a merged decoder; surfacing the real input names if our naming
         // assumption is wrong (native errors don't reach logcat).
-        let in_names: Vec<String> = decoder.inputs.iter().map(|i| i.name.to_string()).collect();
+        let in_names: Vec<String> = decoder.inputs().iter().map(|i| i.name().to_string()).collect();
         let n_layers = (0usize..)
             .take_while(|&i| in_names.iter().any(|n| *n == past_name(i, "decoder", "key")))
             .count();
@@ -306,7 +309,7 @@ fn engine_cell() -> &'static Mutex<Option<NllbEngine>> {
 /// Loads (or reuses) the resident engine for `model_dir` without translating.
 /// Lets the UI warm the models up once and report a "loaded" state.
 pub fn load(model_dir: &str, ort_dylib: &str) -> Result<(), String> {
-    init_ort(ort_dylib);
+    init_ort(ort_dylib)?;
     let mut guard = engine_cell().lock().map_err(|e| e.to_string())?;
     ensure_loaded(&mut guard, model_dir)?;
     Ok(())
@@ -332,7 +335,7 @@ pub fn translate_streaming(
     ort_dylib: &str,
     on_partial: impl FnMut(&str),
 ) -> Result<String, String> {
-    init_ort(ort_dylib);
+    init_ort(ort_dylib)?;
     let mut guard = engine_cell().lock().map_err(|e| e.to_string())?;
     let engine = ensure_loaded(&mut guard, model_dir)?;
     engine.run(text, src_lang, tgt_lang, on_partial)
