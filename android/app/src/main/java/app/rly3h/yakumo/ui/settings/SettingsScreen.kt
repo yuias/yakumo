@@ -1,18 +1,23 @@
 package app.rly3h.yakumo.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -29,7 +34,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -99,6 +108,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
   var rate by remember { mutableStateOf(settings.speechRate) }
   var autoSpeak by remember { mutableStateOf(settings.autoSpeak) }
   var streamingAsr by remember { mutableStateOf(settings.streamingAsr) }
+  var experimentalExpanded by remember { mutableStateOf(settings.streamingAsr) }
   var engineStatus by remember { mutableStateOf(ENGINE_IDLE) }
   var busy by remember { mutableStateOf(false) }
 
@@ -336,47 +346,96 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
     HorizontalDivider()
 
-    SectionTitle("Experimental")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-      Text("Streaming English ASR (nemotron)", style = MaterialTheme.typography.bodyMedium)
-      Switch(
-        checked = streamingAsr,
-        onCheckedChange = {
-          streamingAsr = it
-          settings.streamingAsr = it
-        },
+    val streamReady = modelStates["asr_stream"]?.present == true
+    Row(
+      Modifier
+        .fillMaxWidth()
+        .heightIn(min = 48.dp)
+        .clickable(
+          role = Role.Button,
+          onClickLabel = if (experimentalExpanded) "Collapse" else "Expand",
+        ) { experimentalExpanded = !experimentalExpanded }
+        .semantics { stateDescription = if (experimentalExpanded) "Expanded" else "Collapsed" },
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      SectionTitle("Experimental")
+      // The row carries the semantics; a description here would be read twice.
+      Icon(
+        Icons.Filled.ArrowDropDown,
+        contentDescription = null,
+        modifier = Modifier.rotate(if (experimentalExpanded) 180f else 0f),
       )
     }
-    Text(
-      "Live, low-latency transcripts for the EN→JA flow. English only — leave off for Japanese input. Needs the streaming model below.",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.outline,
-    )
-    Button(
-      enabled = !busy && !downloading && !deleting,
-      onClick = { downloadModels(listOf("asr_stream")) },
-    ) { Text("Download streaming model (~464 MB)") }
+    if (!experimentalExpanded) {
+      val summary = "Streaming English ASR: ${if (streamingAsr) "On" else "Off"}" +
+        if (streamingAsr && !streamReady) " (model missing)" else ""
+      Text(
+        summary,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    } else {
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text("Streaming English ASR (nemotron)", style = MaterialTheme.typography.bodyMedium)
+        // Stays enabled while on so the user can always turn it off.
+        Switch(
+          checked = streamingAsr,
+          enabled = streamingAsr || streamReady,
+          onCheckedChange = {
+            streamingAsr = it
+            settings.streamingAsr = it
+          },
+        )
+      }
+      if (!streamReady) {
+        Text(
+          if (streamingAsr) {
+            "Streaming model missing. Offline sessions will not start until you download it or turn this off."
+          } else {
+            "Download the streaming model first."
+          },
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.outline,
+        )
+      }
+      Text(
+        "Live, low-latency transcripts for the EN→JA flow. English only — leave off for Japanese input. Needs the streaming model below.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+      specs.firstOrNull { it.id == "asr_stream" }?.let { spec ->
+        ModelRow(
+          label = spec.displayName,
+          status = statusText(spec),
+          downloadEnabled = downloadEnabled(spec.id),
+          deleteEnabled = deleteEnabled(spec.id),
+          onDownload = { downloadModels(listOf(spec.id)) },
+          onDelete = { pendingDelete = spec.id },
+        )
+      }
 
-    Text(
-      "End of turn — how the streaming recognizer splits utterances. Applies to the next session; changing these reloads the model.",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.outline,
-    )
-    VadSlider("Silence to end a turn", epRule2, EndpointBounds.rule2, { "%.1f s".format(it) }, { epRule2 = it }) {
-      settings.endpointRule2 = epRule2
+      Text(
+        "End of turn — how the streaming recognizer splits utterances. Applies to the next session; changing these reloads the model.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+      VadSlider("Silence to end a turn", epRule2, EndpointBounds.rule2, { "%.1f s".format(it) }, { epRule2 = it }) {
+        settings.endpointRule2 = epRule2
+      }
+      VadSlider("Silence before speech", epRule1, EndpointBounds.rule1, { "%.1f s".format(it) }, { epRule1 = it }) {
+        settings.endpointRule1 = epRule1
+      }
+      VadSlider("Max utterance length", epRule3, EndpointBounds.rule3, { "${it.toInt()} s" }, { epRule3 = it }) {
+        settings.endpointRule3 = epRule3
+      }
+      TextButton(onClick = {
+        settings.resetEndpoint()
+        epRule1 = settings.endpointRule1
+        epRule2 = settings.endpointRule2
+        epRule3 = settings.endpointRule3
+      }) { Text("Reset to defaults") }
     }
-    VadSlider("Silence before speech", epRule1, EndpointBounds.rule1, { "%.1f s".format(it) }, { epRule1 = it }) {
-      settings.endpointRule1 = epRule1
-    }
-    VadSlider("Max utterance length", epRule3, EndpointBounds.rule3, { "${it.toInt()} s" }, { epRule3 = it }) {
-      settings.endpointRule3 = epRule3
-    }
-    TextButton(onClick = {
-      settings.resetEndpoint()
-      epRule1 = settings.endpointRule1
-      epRule2 = settings.endpointRule2
-      epRule3 = settings.endpointRule3
-    }) { Text("Reset to defaults") }
 
     HorizontalDivider()
 
