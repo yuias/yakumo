@@ -694,6 +694,8 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+
+    internal fun ensureInitialized() = Unit
     external fun uniffi_translatecore_checksum_func_asr_load(
     ): Int
     external fun uniffi_translatecore_checksum_func_asr_recognize(
@@ -742,6 +744,8 @@ internal object UniffiLib {
         uniffiCallbackInterfaceTranslationSink.register(this)
         
     }
+
+    internal fun ensureInitialized() = Unit
     external fun uniffi_translatecore_fn_init_callback_vtable_translationsink(`vtable`: UniffiVTableCallbackInterfaceTranslationSink,
     ): Unit
     external fun uniffi_translatecore_fn_func_asr_load(`modelDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -895,55 +899,55 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_translatecore_checksum_func_asr_load() != 21069) {
+    if ((lib.uniffi_translatecore_checksum_func_asr_load() and 0xFFFF) != 21069) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_asr_recognize() != 38824) {
+    if ((lib.uniffi_translatecore_checksum_func_asr_recognize() and 0xFFFF) != 38824) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_asr_stream_accept() != 25770) {
+    if ((lib.uniffi_translatecore_checksum_func_asr_stream_accept() and 0xFFFF) != 25770) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_asr_stream_load() != 1011) {
+    if ((lib.uniffi_translatecore_checksum_func_asr_stream_load() and 0xFFFF) != 1011) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_asr_stream_reset() != 31695) {
+    if ((lib.uniffi_translatecore_checksum_func_asr_stream_reset() and 0xFFFF) != 31695) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_core_version() != 25502) {
+    if ((lib.uniffi_translatecore_checksum_func_core_version() and 0xFFFF) != 25502) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_greeting() != 47274) {
+    if ((lib.uniffi_translatecore_checksum_func_greeting() and 0xFFFF) != 47274) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_sherpa_version() != 53038) {
+    if ((lib.uniffi_translatecore_checksum_func_sherpa_version() and 0xFFFF) != 53038) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_translate_load() != 7735) {
+    if ((lib.uniffi_translatecore_checksum_func_translate_load() and 0xFFFF) != 7735) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_translate_smoke() != 55417) {
+    if ((lib.uniffi_translatecore_checksum_func_translate_smoke() and 0xFFFF) != 55417) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_translate_text() != 28256) {
+    if ((lib.uniffi_translatecore_checksum_func_translate_text() and 0xFFFF) != 28256) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_translate_text_streaming() != 29506) {
+    if ((lib.uniffi_translatecore_checksum_func_translate_text_streaming() and 0xFFFF) != 29506) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_vad_accept() != 40090) {
+    if ((lib.uniffi_translatecore_checksum_func_vad_accept() and 0xFFFF) != 40090) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_vad_flush() != 39812) {
+    if ((lib.uniffi_translatecore_checksum_func_vad_flush() and 0xFFFF) != 39812) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_vad_load() != 44808) {
+    if ((lib.uniffi_translatecore_checksum_func_vad_load() and 0xFFFF) != 44808) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_func_vad_reset() != 39461) {
+    if ((lib.uniffi_translatecore_checksum_func_vad_reset() and 0xFFFF) != 39461) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_translatecore_checksum_method_translationsink_on_partial() != 46971) {
+    if ((lib.uniffi_translatecore_checksum_method_translationsink_on_partial() and 0xFFFF) != 46971) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -952,10 +956,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
  * @suppress
  */
 public fun uniffiEnsureInitialized() {
-    IntegrityCheckingUniffiLib
-    // UniffiLib() initialized as objects are used, but we still need to explicitly
-    // reference it so initialization across crates works as expected.
-    UniffiLib
+    // Call arbitrary methods on IntegrityCheckingUniffiLib and UniffiLib to ensure that
+    // their init blocks run. This ensures initialization across crates works as expected.
+    IntegrityCheckingUniffiLib.ensureInitialized()
+    UniffiLib.ensureInitialized()
 }
 
 // Async support
