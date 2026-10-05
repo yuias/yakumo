@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -37,9 +38,11 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.layout.Row
 import app.rly3h.yakumo.BuildConfig
 import app.rly3h.yakumo.R
+import app.rly3h.yakumo.RecordingService
 import app.rly3h.yakumo.translate.GeminiLive
 import app.rly3h.yakumo.translate.OpenAiRealtime
 import app.rly3h.yakumo.data.ModelCancelled
+import app.rly3h.yakumo.data.ModelSpec
 import app.rly3h.yakumo.data.Models
 import app.rly3h.yakumo.data.OnlineProvider
 import app.rly3h.yakumo.data.Settings
@@ -58,24 +61,45 @@ import uniffi.translatecore.translateLoad
 private val RATES = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 private const val ORT_DYLIB = "libonnxruntime.so"
 
+// Opt-in models: excluded from "Download missing models" and the "all required
+// present" check; shown in the Experimental section instead.
+private val OPTIONAL_MODELS = setOf("asr_stream")
+
+private const val ENGINE_IDLE = "Not loaded. The first session loads them."
+
+private data class ModelState(val present: Boolean, val bytes: Long)
+
+// Same MB convention as the download overlay (bytes / 1_000_000).
+private fun formatMb(bytes: Long): String =
+  if (bytes < 1_000_000) "<1 MB" else "${bytes / 1_000_000} MB"
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(modifier: Modifier = Modifier) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val settings = remember { Settings(context) }
-  val ids = remember { Models.manifest(context).models.map { it.id } }
+  val specs = remember { Models.manifest(context).models }
+  val modelStates = remember { mutableStateMapOf<String, ModelState>() }
 
-  fun modelLine() = ids.joinToString("\n") {
-    "$it: ${if (Models.isPresent(context, it)) "ready" else "missing"}"
+  fun refresh(id: String) {
+    modelStates[id] = ModelState(Models.isPresent(context, id), Models.sizeOnDisk(context, id))
   }
+
+  fun refreshAll() = specs.forEach { refresh(it.id) }
+  remember { refreshAll() }
+
+  var modelMsg by remember { mutableStateOf<String?>(null) }
+  var pendingDelete by remember { mutableStateOf<String?>(null) }
+  var deleting by remember { mutableStateOf(false) }
+  // Not Compose state: read fresh on every composition.
+  val recording = RecordingService.onStopRequested != null
 
   var myLang by remember { mutableStateOf(settings.myLangFlores) }
   var rate by remember { mutableStateOf(settings.speechRate) }
   var autoSpeak by remember { mutableStateOf(settings.autoSpeak) }
   var streamingAsr by remember { mutableStateOf(settings.streamingAsr) }
-  var modelStatus by remember { mutableStateOf(modelLine()) }
-  var engineStatus by remember { mutableStateOf("not loaded (first use loads them)") }
+  var engineStatus by remember { mutableStateOf(ENGINE_IDLE) }
   var busy by remember { mutableStateOf(false) }
 
   // Download overlay state. The cancel flag is read from the IO thread, so it is
@@ -85,6 +109,54 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
   // null => indeterminate bar (size unknown / between files); else 0..1.
   var dlFraction by remember { mutableStateOf<Float?>(null) }
   val cancelFlag = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+
+  fun downloadModels(targetIds: List<String>) {
+    downloading = true
+    cancelFlag.set(false)
+    dlProgress = "Starting…"
+    dlFraction = null
+    scope.launch {
+      try {
+        withContext(Dispatchers.IO) {
+          for (id in targetIds) {
+            Models.ensure(
+              context,
+              id,
+              onProgress = { dlProgress = it },
+              onFraction = { dlFraction = it },
+              cancel = { cancelFlag.get() },
+            )
+          }
+        }
+        modelMsg = null
+      } catch (c: ModelCancelled) {
+        modelMsg = "Download cancelled."
+      } catch (e: Throwable) {
+        modelMsg = "Download failed: ${e.message}"
+      } finally {
+        // Also on cancel/failure, so finished models in a batch still show up.
+        refreshAll()
+        downloading = false
+      }
+    }
+  }
+
+  val idle = !busy && !downloading && !deleting
+
+  fun statusText(spec: ModelSpec): String {
+    val st = modelStates[spec.id] ?: return ""
+    return when {
+      st.present -> "Downloaded · ${formatMb(st.bytes)}"
+      st.bytes > 0 -> "Incomplete · ${formatMb(st.bytes)}"
+      else -> "Not downloaded" + (spec.approxMb?.let { " (~$it MB)" } ?: "")
+    }
+  }
+
+  fun downloadEnabled(id: String) = idle && modelStates[id]?.present == false
+
+  // Enabled on bytes > 0, not only present, so leftovers of a failed
+  // download can be cleared too.
+  fun deleteEnabled(id: String) = idle && !recording && (modelStates[id]?.bytes ?: 0L) > 0
 
   var epRule1 by remember { mutableStateOf(settings.endpointRule1) }
   var epRule2 by remember { mutableStateOf(settings.endpointRule2) }
@@ -157,65 +229,80 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     HorizontalDivider()
 
     SectionTitle("Models")
-    Text(modelStatus, style = MaterialTheme.typography.bodySmall)
+    Text(
+      "Required for offline translation. Downloaded once and stored on this device.",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.outline,
+    )
+    val requiredSpecs = specs.filter { it.id !in OPTIONAL_MODELS }
+    val missingRequired = requiredSpecs.filter { modelStates[it.id]?.present != true }
     Button(
-      enabled = !busy && !downloading,
-      onClick = {
-        downloading = true
-        cancelFlag.set(false)
-        dlProgress = "Starting…"
-        dlFraction = null
-        scope.launch {
-          try {
-            withContext(Dispatchers.IO) {
-              // The experimental streaming model is large and opt-in; it has its
-              // own button below rather than riding on "download all".
-              for (id in ids.filter { it != "asr_stream" }) {
-                Models.ensure(
-                  context,
-                  id,
-                  onProgress = { dlProgress = it },
-                  onFraction = { dlFraction = it },
-                  cancel = { cancelFlag.get() },
-                )
-              }
-            }
-            modelStatus = modelLine()
-          } catch (c: ModelCancelled) {
-            modelStatus = "Download cancelled"
-          } catch (e: Throwable) {
-            modelStatus = "Error: ${e.message}"
-          } finally {
-            downloading = false
-          }
-        }
-      },
-    ) { Text("Download all models") }
+      enabled = idle && missingRequired.isNotEmpty(),
+      onClick = { downloadModels(missingRequired.map { it.id }) },
+    ) { Text("Download missing models") }
+    if (missingRequired.isEmpty()) {
+      Text(
+        "All required models are downloaded.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+    requiredSpecs.forEach { spec ->
+      ModelRow(
+        label = spec.displayName,
+        status = statusText(spec),
+        downloadEnabled = downloadEnabled(spec.id),
+        deleteEnabled = deleteEnabled(spec.id),
+        onDownload = { downloadModels(listOf(spec.id)) },
+        onDelete = { pendingDelete = spec.id },
+      )
+    }
+    if (recording) {
+      Text(
+        "Model deletion is unavailable while a session is recording.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+    modelMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 
+    val preloadReady = modelStates["asr"]?.present == true && modelStates["nllb"]?.present == true
     Button(
-      enabled = !busy && !downloading,
+      enabled = idle && preloadReady,
       onClick = {
         busy = true
-        engineStatus = "loading…"
+        engineStatus = "Loading…"
         scope.launch {
           try {
             withContext(Dispatchers.IO) {
-              engineStatus = "loading asr…"
+              engineStatus = "Loading speech recognition…"
               Models.ensure(context, "asr", onProgress = { engineStatus = it })
               asrLoad(Models.dir(context, "asr").absolutePath)
-              engineStatus = "loading nllb…"
+              engineStatus = "Loading translation…"
               Models.ensure(context, "nllb", onProgress = { engineStatus = it })
               translateLoad(Models.dir(context, "nllb").absolutePath, ORT_DYLIB)
             }
-            engineStatus = "loaded (asr, nllb) — resident"
+            engineStatus = "Loaded and ready."
           } catch (e: Throwable) {
-            engineStatus = "error: ${e.message}"
+            engineStatus = "Load failed: ${e.message}"
           } finally {
             busy = false
           }
         }
       },
-    ) { Text("Load models into memory") }
+    ) { Text("Preload models (faster first session)") }
+    Text(
+      "Loads speech recognition and translation into memory now instead of at the start of the first session.",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.outline,
+    )
+    if (!preloadReady) {
+      Text(
+        "Download the models first.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
     Text(engineStatus, style = MaterialTheme.typography.bodySmall)
 
     HorizontalDivider()
@@ -266,33 +353,8 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
       color = MaterialTheme.colorScheme.outline,
     )
     Button(
-      enabled = !busy && !downloading,
-      onClick = {
-        downloading = true
-        cancelFlag.set(false)
-        dlProgress = "Starting…"
-        dlFraction = null
-        scope.launch {
-          try {
-            withContext(Dispatchers.IO) {
-              Models.ensure(
-                context,
-                "asr_stream",
-                onProgress = { dlProgress = it },
-                onFraction = { dlFraction = it },
-                cancel = { cancelFlag.get() },
-              )
-            }
-            modelStatus = modelLine()
-          } catch (c: ModelCancelled) {
-            modelStatus = "Download cancelled"
-          } catch (e: Throwable) {
-            modelStatus = "Error: ${e.message}"
-          } finally {
-            downloading = false
-          }
-        }
-      },
+      enabled = !busy && !downloading && !deleting,
+      onClick = { downloadModels(listOf("asr_stream")) },
     ) { Text("Download streaming model (~464 MB)") }
 
     Text(
@@ -441,7 +503,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
   if (downloading) {
     AlertDialog(
       onDismissRequest = {}, // require an explicit Cancel; ignore outside taps
-      title = { Text("Downloading models") },
+      title = { Text("Downloading") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
           val frac = dlFraction
@@ -459,11 +521,83 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
       properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false),
     )
   }
+
+  pendingDelete?.let { id ->
+    val spec = specs.first { it.id == id }
+    AlertDialog(
+      onDismissRequest = { pendingDelete = null },
+      title = { Text("Delete ${spec.displayName}?") },
+      text = {
+        Text(
+          "Frees ${formatMb(modelStates[id]?.bytes ?: 0L)}. You can download it again later. " +
+            "If the model is already loaded, the app keeps using it from memory until it restarts.",
+        )
+      },
+      confirmButton = {
+        TextButton(onClick = {
+          pendingDelete = null
+          // A session may have started while the dialog was open.
+          if (RecordingService.onStopRequested != null) {
+            modelMsg = "Stop the current session before deleting models."
+            return@TextButton
+          }
+          deleting = true
+          scope.launch {
+            var threw = false
+            try {
+              withContext(Dispatchers.IO) { Models.delete(context, id) }
+            } catch (e: Throwable) {
+              threw = true
+              modelMsg = "Delete failed: ${e.message}"
+            } finally {
+              refresh(id)
+              deleting = false
+            }
+            // delete() is best-effort and does not throw, so check what is left on disk.
+            if (!threw) {
+              if ((modelStates[id]?.bytes ?: 0L) > 0) {
+                modelMsg = "Could not delete all files of ${spec.displayName}."
+              } else {
+                engineStatus = ENGINE_IDLE
+                modelMsg = "Deleted ${spec.displayName}."
+              }
+            }
+          }
+        }) { Text("Delete") }
+      },
+      dismissButton = {
+        TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+      },
+    )
+  }
 }
 
 @Composable
 private fun SectionTitle(text: String) {
   Text(text, style = MaterialTheme.typography.titleMedium)
+}
+
+@Composable
+private fun ModelRow(
+  label: String,
+  status: String,
+  downloadEnabled: Boolean,
+  deleteEnabled: Boolean,
+  onDownload: () -> Unit,
+  onDelete: () -> Unit,
+) {
+  Row(
+    Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Column(Modifier.weight(1f)) {
+      Text(label, style = MaterialTheme.typography.bodyMedium)
+      Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+    }
+    TextButton(enabled = downloadEnabled, onClick = onDownload) { Text("Download") }
+    TextButton(enabled = deleteEnabled, onClick = onDelete) { Text("Delete") }
+  }
 }
 
 // Label + current value + a bounded slider. `onChange` updates UI state live;
