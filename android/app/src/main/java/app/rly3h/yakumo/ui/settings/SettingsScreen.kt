@@ -1,6 +1,5 @@
 package app.rly3h.yakumo.ui.settings
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -10,35 +9,33 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -50,11 +47,17 @@ import app.rly3h.yakumo.R
 import app.rly3h.yakumo.RecordingService
 import app.rly3h.yakumo.translate.GeminiLive
 import app.rly3h.yakumo.translate.OpenAiRealtime
+import app.rly3h.yakumo.data.AsrMode
 import app.rly3h.yakumo.data.ModelCancelled
 import app.rly3h.yakumo.data.ModelSpec
 import app.rly3h.yakumo.data.Models
+import app.rly3h.yakumo.data.MtModel
 import app.rly3h.yakumo.data.OnlineProvider
 import app.rly3h.yakumo.data.Settings
+import app.rly3h.yakumo.data.requiredModelIds
+import app.rly3h.yakumo.translate.modelFile
+import app.rly3h.yakumo.translate.releaseUnusedEngines
+import app.rly3h.yakumo.translate.unloadEngineFor
 import app.rly3h.yakumo.ui.session.EndpointBounds
 import app.rly3h.yakumo.ui.session.LANGUAGES
 import app.rly3h.yakumo.ui.session.OnlineBounds
@@ -63,20 +66,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.translatecore.asrLoad
+import uniffi.translatecore.asrStreamLoad
 import uniffi.translatecore.coreVersion
+import uniffi.translatecore.mtLoad
+import uniffi.translatecore.mtSupported
+import uniffi.translatecore.mtSystemInfo
+import uniffi.translatecore.mtUnload
 import uniffi.translatecore.sherpaVersion
-import uniffi.translatecore.translateLoad
+import uniffi.translatecore.vadLoad
 
 private val RATES = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-private const val ORT_DYLIB = "libonnxruntime.so"
-
-// Opt-in models: excluded from "Download missing models" and the "all required
-// present" check; shown in the Experimental section instead.
-private val OPTIONAL_MODELS = setOf("asr_stream", "mt_lfm2", "mt_hymt2")
 
 private const val ENGINE_IDLE = "Not loaded. The first session loads them."
 
 private data class ModelState(val present: Boolean, val bytes: Long)
+
+// CPU capability and ggml's feature line, queried once off the main thread.
+private data class MtInfo(val supported: Boolean, val systemInfo: String)
 
 // Same MB convention as the download overlay (bytes / 1_000_000).
 private fun formatMb(bytes: Long): String =
@@ -107,8 +113,8 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
   var myLang by remember { mutableStateOf(settings.myLangFlores) }
   var rate by remember { mutableStateOf(settings.speechRate) }
   var autoSpeak by remember { mutableStateOf(settings.autoSpeak) }
-  var streamingAsr by remember { mutableStateOf(settings.streamingAsr) }
-  var experimentalExpanded by remember { mutableStateOf(settings.streamingAsr) }
+  var asrMode by remember { mutableStateOf(settings.asrMode) }
+  var mtModel by remember { mutableStateOf(settings.mtModel) }
   var engineStatus by remember { mutableStateOf(ENGINE_IDLE) }
   var busy by remember { mutableStateOf(false) }
 
@@ -152,6 +158,43 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
   }
 
   val idle = !busy && !downloading && !deleting
+
+  // mtSystemInfo() initializes the llama backend, so it must not run on the main thread.
+  val mtInfo by produceState<MtInfo?>(null) {
+    value = withContext(Dispatchers.IO) { MtInfo(mtSupported(), mtSystemInfo()) }
+  }
+
+  var obsoleteBytes by remember { mutableStateOf(0L) }
+  LaunchedEffect(Unit) { obsoleteBytes = withContext(Dispatchers.IO) { Models.obsoleteBytes(context) } }
+
+  // Persist first, then free the engines the new choice no longer uses.
+  fun selectAsrMode(mode: AsrMode) {
+    if (mode == asrMode) return
+    asrMode = mode
+    settings.asrMode = mode
+    scope.launch {
+      try {
+        withContext(Dispatchers.IO) { releaseUnusedEngines(mode) }
+        engineStatus = ENGINE_IDLE
+      } catch (e: Throwable) {
+        engineStatus = "Unload failed: ${e.message}"
+      }
+    }
+  }
+
+  fun selectMtModel(model: MtModel) {
+    if (model == mtModel) return
+    mtModel = model
+    settings.mtModel = model
+    scope.launch {
+      try {
+        withContext(Dispatchers.IO) { mtUnload() }
+        engineStatus = ENGINE_IDLE
+      } catch (e: Throwable) {
+        engineStatus = "Unload failed: ${e.message}"
+      }
+    }
+  }
 
   fun statusText(spec: ModelSpec): String {
     val st = modelStates[spec.id] ?: return ""
@@ -238,183 +281,24 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
     HorizontalDivider()
 
-    SectionTitle("Models")
-    Text(
-      "Required for offline translation. Downloaded once and stored on this device.",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.outline,
+    SectionTitle("Speech recognition")
+    ChoiceRow(
+      selected = asrMode == AsrMode.SEGMENTED,
+      enabled = !recording && !busy,
+      title = "Segmented",
+      description = "SenseVoice. Best accuracy; detects English/Japanese per utterance. " +
+        "Turns are split by voice detection.",
+      onSelect = { selectAsrMode(AsrMode.SEGMENTED) },
     )
-    val requiredSpecs = specs.filter { it.id !in OPTIONAL_MODELS }
-    val missingRequired = requiredSpecs.filter { modelStates[it.id]?.present != true }
-    Button(
-      enabled = idle && missingRequired.isNotEmpty(),
-      onClick = { downloadModels(missingRequired.map { it.id }) },
-    ) { Text("Download missing models") }
-    if (missingRequired.isEmpty()) {
-      Text(
-        "All required models are downloaded.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-      )
-    }
-    requiredSpecs.forEach { spec ->
-      ModelRow(
-        label = spec.displayName,
-        status = statusText(spec),
-        downloadEnabled = downloadEnabled(spec.id),
-        deleteEnabled = deleteEnabled(spec.id),
-        onDownload = { downloadModels(listOf(spec.id)) },
-        onDelete = { pendingDelete = spec.id },
-      )
-    }
-    if (recording) {
-      Text(
-        "Model deletion is unavailable while a session is recording.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-      )
-    }
-    modelMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-
-    val preloadReady = modelStates["asr"]?.present == true && modelStates["nllb"]?.present == true
-    Button(
-      enabled = idle && preloadReady,
-      onClick = {
-        busy = true
-        engineStatus = "Loading…"
-        scope.launch {
-          try {
-            withContext(Dispatchers.IO) {
-              engineStatus = "Loading speech recognition…"
-              Models.ensure(context, "asr", onProgress = { engineStatus = it })
-              asrLoad(Models.dir(context, "asr").absolutePath)
-              engineStatus = "Loading translation…"
-              Models.ensure(context, "nllb", onProgress = { engineStatus = it })
-              translateLoad(Models.dir(context, "nllb").absolutePath, ORT_DYLIB)
-            }
-            engineStatus = "Loaded and ready."
-          } catch (e: Throwable) {
-            engineStatus = "Load failed: ${e.message}"
-          } finally {
-            busy = false
-          }
-        }
-      },
-    ) { Text("Preload models (faster first session)") }
-    Text(
-      "Loads speech recognition and translation into memory now instead of at the start of the first session.",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.outline,
+    ChoiceRow(
+      selected = asrMode == AsrMode.STREAMING,
+      enabled = !recording && !busy,
+      title = "Streaming",
+      description = "Nemotron 3.5. Live partial transcript while you speak; Japanese accuracy " +
+        "is lower than SenseVoice. Turns are split by the end-of-turn rules below.",
+      onSelect = { selectAsrMode(AsrMode.STREAMING) },
     )
-    if (!preloadReady) {
-      Text(
-        "Download the models first.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-      )
-    }
-    Text(engineStatus, style = MaterialTheme.typography.bodySmall)
-
-    HorizontalDivider()
-
-    SectionTitle("Voice detection")
-    Text(
-      "Silero VAD splits speech into turns while recording. Robust to background " +
-        "noise. Applies to the next session; changing these reloads the detector.",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.outline,
-    )
-    VadSlider("Silence to split a turn", vadSilence, VadBounds.minSilenceMs, { "${it.toInt()} ms" }, { vadSilence = it }) {
-      settings.vadMinSilenceMs = vadSilence.toInt()
-    }
-    VadSlider("Speech sensitivity (lower = more sensitive)", vadThresh, VadBounds.threshold, { "%.2f".format(it) }, { vadThresh = it }) {
-      settings.vadThreshold = vadThresh
-    }
-    VadSlider("Min speech length", vadMinSpeech, VadBounds.minSpeechMs, { "${it.toInt()} ms" }, { vadMinSpeech = it }) {
-      settings.vadMinSpeechMs = vadMinSpeech.toInt()
-    }
-    VadSlider("Max segment length", vadMaxSpeech, VadBounds.maxSpeechMs, { "${(it / 1000).toInt()} s" }, { vadMaxSpeech = it }) {
-      settings.vadMaxSpeechMs = vadMaxSpeech.toInt()
-    }
-    TextButton(onClick = {
-      settings.resetVad()
-      vadThresh = settings.vadThreshold
-      vadSilence = settings.vadMinSilenceMs.toFloat()
-      vadMinSpeech = settings.vadMinSpeechMs.toFloat()
-      vadMaxSpeech = settings.vadMaxSpeechMs.toFloat()
-    }) { Text("Reset to defaults") }
-
-    HorizontalDivider()
-
-    val streamReady = modelStates["asr_stream"]?.present == true
-    Row(
-      Modifier
-        .fillMaxWidth()
-        .heightIn(min = 48.dp)
-        .clickable(
-          role = Role.Button,
-          onClickLabel = if (experimentalExpanded) "Collapse" else "Expand",
-        ) { experimentalExpanded = !experimentalExpanded }
-        .semantics { stateDescription = if (experimentalExpanded) "Expanded" else "Collapsed" },
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      SectionTitle("Experimental")
-      // The row carries the semantics; a description here would be read twice.
-      Icon(
-        Icons.Filled.ArrowDropDown,
-        contentDescription = null,
-        modifier = Modifier.rotate(if (experimentalExpanded) 180f else 0f),
-      )
-    }
-    if (!experimentalExpanded) {
-      val summary = "Streaming English ASR: ${if (streamingAsr) "On" else "Off"}" +
-        if (streamingAsr && !streamReady) " (model missing)" else ""
-      Text(
-        summary,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-      )
-    } else {
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text("Streaming English ASR (nemotron)", style = MaterialTheme.typography.bodyMedium)
-        // Stays enabled while on so the user can always turn it off.
-        Switch(
-          checked = streamingAsr,
-          enabled = streamingAsr || streamReady,
-          onCheckedChange = {
-            streamingAsr = it
-            settings.streamingAsr = it
-          },
-        )
-      }
-      if (!streamReady) {
-        Text(
-          if (streamingAsr) {
-            "Streaming model missing. Offline sessions will not start until you download it or turn this off."
-          } else {
-            "Download the streaming model first."
-          },
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.outline,
-        )
-      }
-      Text(
-        "Live, low-latency transcripts for the EN→JA flow. English only — leave off for Japanese input. Needs the streaming model below.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.outline,
-      )
-      specs.firstOrNull { it.id == "asr_stream" }?.let { spec ->
-        ModelRow(
-          label = spec.displayName,
-          status = statusText(spec),
-          downloadEnabled = downloadEnabled(spec.id),
-          deleteEnabled = deleteEnabled(spec.id),
-          onDownload = { downloadModels(listOf(spec.id)) },
-          onDelete = { pendingDelete = spec.id },
-        )
-      }
-
+    if (asrMode == AsrMode.STREAMING) {
       Text(
         "End of turn — how the streaming recognizer splits utterances. Applies to the next session; changing these reloads the model.",
         style = MaterialTheme.typography.bodySmall,
@@ -438,6 +322,200 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     }
 
     HorizontalDivider()
+
+    SectionTitle("Translation")
+    ChoiceRow(
+      selected = mtModel == MtModel.LFM2,
+      enabled = !recording && !busy,
+      title = "LFM2",
+      description = "LFM2-350M-ENJP-MT. English↔Japanese only; small and fast (~379 MB).",
+      onSelect = { selectMtModel(MtModel.LFM2) },
+    )
+    ChoiceRow(
+      selected = mtModel == MtModel.HYMT2,
+      enabled = !recording && !busy,
+      title = "Hy-MT2",
+      description = "Hy-MT2-1.8B. Multilingual; larger and slower (~1.1 GB, needs more memory).",
+      onSelect = { selectMtModel(MtModel.HYMT2) },
+    )
+    if (mtInfo?.supported == false) {
+      Text(
+        "This device's CPU lacks the dot-product instructions the offline translator needs. " +
+          "Offline translation is unavailable; Online mode still works.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+      )
+    }
+    if (recording) {
+      Text(
+        "Speech recognition and translation can't be changed while a session is recording.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+
+    HorizontalDivider()
+
+    SectionTitle("Models")
+    Text(
+      "Required for offline translation. Downloaded once and stored on this device.",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.outline,
+    )
+    val requiredIds = requiredModelIds(asrMode, mtModel)
+    val missingRequired = requiredIds.filter { modelStates[it]?.present != true }
+    Button(
+      enabled = idle && missingRequired.isNotEmpty(),
+      onClick = { downloadModels(missingRequired) },
+    ) { Text("Download models for current settings") }
+    if (missingRequired.isEmpty()) {
+      Text(
+        "All models for the current settings are downloaded.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+    specs.forEach { spec ->
+      ModelRow(
+        label = spec.displayName + if (spec.id in requiredIds) " · in use" else "",
+        status = statusText(spec),
+        downloadEnabled = downloadEnabled(spec.id),
+        deleteEnabled = deleteEnabled(spec.id),
+        onDownload = { downloadModels(listOf(spec.id)) },
+        onDelete = { pendingDelete = spec.id },
+      )
+    }
+    if (obsoleteBytes > 0) {
+      Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          "Old model files from earlier versions · ${formatMb(obsoleteBytes)}",
+          style = MaterialTheme.typography.bodyMedium,
+          modifier = Modifier.weight(1f),
+        )
+        TextButton(
+          enabled = idle && !recording,
+          onClick = {
+            deleting = true
+            scope.launch {
+              try {
+                withContext(Dispatchers.IO) { Models.deleteObsolete(context) }
+                modelMsg = "Removed old model files."
+              } catch (e: Throwable) {
+                modelMsg = "Remove failed: ${e.message}"
+              } finally {
+                obsoleteBytes = withContext(Dispatchers.IO) { Models.obsoleteBytes(context) }
+                deleting = false
+              }
+            }
+          },
+        ) { Text("Remove") }
+      }
+    }
+    if (recording) {
+      Text(
+        "Model deletion is unavailable while a session is recording.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+    modelMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+
+    val preloadReady = missingRequired.isEmpty() && mtInfo?.supported == true
+    Button(
+      enabled = idle && preloadReady,
+      onClick = {
+        busy = true
+        engineStatus = "Loading…"
+        // Snapshot: the radios are disabled while busy, but keep both paths consistent.
+        val mode = asrMode
+        val mt = mtModel
+        scope.launch {
+          try {
+            withContext(Dispatchers.IO) {
+              engineStatus = "Loading speech recognition…"
+              when (mode) {
+                AsrMode.SEGMENTED -> {
+                  val vad = settings.vadParams()
+                  vadLoad(
+                    Models.dir(context, "vad").absolutePath,
+                    vad.threshold,
+                    vad.minSilenceMs / 1000f,
+                    vad.minSpeechMs / 1000f,
+                    vad.maxSpeechMs / 1000f,
+                  )
+                  asrLoad(Models.dir(context, "asr").absolutePath)
+                }
+                AsrMode.STREAMING -> {
+                  val ep = settings.endpointParams()
+                  asrStreamLoad(Models.dir(context, "asr_stream").absolutePath, ep.rule1, ep.rule2, ep.rule3, "auto")
+                }
+              }
+              engineStatus = "Loading translation…"
+              mtLoad(modelFile(context, mt.modelId).absolutePath)
+            }
+            engineStatus = "Loaded and ready."
+          } catch (e: Throwable) {
+            engineStatus = "Load failed: ${e.message}"
+          } finally {
+            busy = false
+          }
+        }
+      },
+    ) { Text("Preload models (faster first session)") }
+    Text(
+      "Loads speech recognition and translation into memory now instead of at the start of the first session.",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.outline,
+    )
+    if (!preloadReady) {
+      Text(
+        when {
+          missingRequired.isNotEmpty() -> "Download the models first."
+          mtInfo == null -> "Checking device support…"
+          else -> "Offline translation is unavailable on this device."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+    Text(engineStatus, style = MaterialTheme.typography.bodySmall)
+
+    HorizontalDivider()
+
+    if (asrMode == AsrMode.SEGMENTED) {
+      SectionTitle("Voice detection")
+      Text(
+        "Silero VAD splits speech into turns while recording. Robust to background " +
+          "noise. Applies to the next session; changing these reloads the detector.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+      VadSlider("Silence to split a turn", vadSilence, VadBounds.minSilenceMs, { "${it.toInt()} ms" }, { vadSilence = it }) {
+        settings.vadMinSilenceMs = vadSilence.toInt()
+      }
+      VadSlider("Speech sensitivity (lower = more sensitive)", vadThresh, VadBounds.threshold, { "%.2f".format(it) }, { vadThresh = it }) {
+        settings.vadThreshold = vadThresh
+      }
+      VadSlider("Min speech length", vadMinSpeech, VadBounds.minSpeechMs, { "${it.toInt()} ms" }, { vadMinSpeech = it }) {
+        settings.vadMinSpeechMs = vadMinSpeech.toInt()
+      }
+      VadSlider("Max segment length", vadMaxSpeech, VadBounds.maxSpeechMs, { "${(it / 1000).toInt()} s" }, { vadMaxSpeech = it }) {
+        settings.vadMaxSpeechMs = vadMaxSpeech.toInt()
+      }
+      TextButton(onClick = {
+        settings.resetVad()
+        vadThresh = settings.vadThreshold
+        vadSilence = settings.vadMinSilenceMs.toFloat()
+        vadMinSpeech = settings.vadMinSpeechMs.toFloat()
+        vadMaxSpeech = settings.vadMaxSpeechMs.toFloat()
+      }) { Text("Reset to defaults") }
+
+      HorizontalDivider()
+    }
 
     SectionTitle("Online translation")
     val providerLabel = when (provider) {
@@ -556,6 +634,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
       remember { Models.manifest(context).models }.forEach { m ->
         Text("${m.id}: ${m.dir}", style = MaterialTheme.typography.bodySmall)
       }
+      mtInfo?.let { Text(it.systemInfo, style = MaterialTheme.typography.bodySmall) }
     }
   }
 
@@ -588,8 +667,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
       title = { Text("Delete ${spec.displayName}?") },
       text = {
         Text(
-          "Frees ${formatMb(modelStates[id]?.bytes ?: 0L)}. You can download it again later. " +
-            "If the model is already loaded, the app keeps using it from memory until it restarts.",
+          "Frees ${formatMb(modelStates[id]?.bytes ?: 0L)}. You can download it again later.",
         )
       },
       confirmButton = {
@@ -604,7 +682,11 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
           scope.launch {
             var threw = false
             try {
-              withContext(Dispatchers.IO) { Models.delete(context, id) }
+              withContext(Dispatchers.IO) {
+                // Release the engine first: the GGUF is mmapped and ONNX engines hold their files open.
+                unloadEngineFor(id)
+                Models.delete(context, id)
+              }
             } catch (e: Throwable) {
               threw = true
               modelMsg = "Delete failed: ${e.message}"
@@ -656,6 +738,31 @@ private fun ModelRow(
     }
     TextButton(enabled = downloadEnabled, onClick = onDownload) { Text("Download") }
     TextButton(enabled = deleteEnabled, onClick = onDelete) { Text("Delete") }
+  }
+}
+
+// One option of an exclusive choice; the whole row is the touch target.
+@Composable
+private fun ChoiceRow(
+  selected: Boolean,
+  enabled: Boolean,
+  title: String,
+  description: String,
+  onSelect: () -> Unit,
+) {
+  Row(
+    Modifier
+      .fillMaxWidth()
+      .heightIn(min = 48.dp)
+      .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    // The row handles the click, so the button itself is not clickable (one tap target).
+    RadioButton(selected = selected, onClick = null, enabled = enabled)
+    Column(Modifier.weight(1f).padding(start = 8.dp)) {
+      Text(title, style = MaterialTheme.typography.bodyMedium)
+      Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+    }
   }
 }
 

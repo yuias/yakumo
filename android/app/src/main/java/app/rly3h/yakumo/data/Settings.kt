@@ -54,11 +54,6 @@ class Settings(context: Context) {
 
   fun requiredModelIds(): List<String> = requiredModelIds(asrMode, mtModel)
 
-  // Shim for SettingsScreen until it moves to [asrMode].
-  var streamingAsr: Boolean
-    get() = asrMode == AsrMode.STREAMING
-    set(v) { asrMode = if (v) AsrMode.STREAMING else AsrMode.SEGMENTED }
-
   // --- Online mode ---
   // Last-used engine toggle (mic-side switch). Offline by default; only honored
   // when an API key is set and the network is up (checked at the call site).
