@@ -23,3 +23,16 @@ thiserror = "2"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "api-28"] }
 # unstable_wasm: pure-Rust regex (no oniguruma C dep) — needed for Android cross-build.
 tokenizers = { version = "0.23", default-features = false, features = ["unstable_wasm"] }
+
+# llama.cpp is cross-compiled with CMake, so it is Android-only: host builds
+# (cargo test, uniffi-bindgen) must not need CMake or a C++ toolchain.
+[target.'cfg(target_os = "android")'.dependencies]
+llama-cpp-2 = { version = "=0.1.159", default-features = false, features = ["android-static-stdcxx"] }
+# Direct dependency only for llama_print_system_info(); keep it pinned to the
+# version llama-cpp-2 resolves to.
+llama-cpp-sys-2 = { version = "=0.1.159", default-features = false }
+
+# cmake-rs derives CMAKE_BUILD_TYPE from the package's opt-level. Without this, a
+# debug build of the core would contain an unoptimized ggml.
+[profile.dev.package.llama-cpp-sys-2]
+opt-level = 3

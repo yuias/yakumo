@@ -1,0 +1,9 @@
+[env]
+# cmake-rs adds no -G for Android targets, so a Windows host would default to a
+# Visual Studio generator, which cannot drive the NDK toolchain file.
+CMAKE_GENERATOR = "Ninja"
+
+# GGML_CPU_ARM_ARCH is deliberately not set here: llama-cpp-sys-2 forwards every
+# GGML_* env var to CMake for all ABIs, so it would leak into the x86_64 configure.
+# The per-ABI build calls (rust/build-android.ps1, android/app/build.gradle.kts) set it
+# for arm64-v8a only.

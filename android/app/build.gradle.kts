@@ -124,25 +124,51 @@ kotlin {
 val rustCoreDir = rootDir.parentFile.resolve("rust/core")
 val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
 
-val cargoBuildRustCore = tasks.register<Exec>("cargoBuildRustCore") {
+// One cargo-ndk invocation per ABI: GGML_CPU_ARM_ARCH (llama.cpp's dot-product
+// build) must reach the arm64 configure only. llama-cpp-sys-2 forwards every GGML_*
+// env var to CMake for all ABIs, so a shared .cargo/config.toml [env] entry would
+// leak into x86_64. Keep the value in sync with rust/build-android.ps1.
+val ggmlArm64Arch = "armv8.2-a+dotprod"
+
+fun registerCargoBuild(taskName: String, abi: String, env: Map<String, String>) =
+    tasks.register<Exec>(taskName) {
+        group = "build"
+        description = "Cross-compiles the Rust core for $abi into jniLibs via cargo-ndk."
+        workingDir = rustCoreDir // cargo-ndk resolves the crate from the cwd Cargo.toml
+
+        inputs.dir(rustCoreDir.resolve("src"))
+        inputs.file(rustCoreDir.resolve("Cargo.toml"))
+        inputs.file(rustCoreDir.resolve("Cargo.lock"))
+        inputs.file(rustCoreDir.resolve("build.rs"))
+        inputs.file(rustCoreDir.resolve(".cargo/config.toml"))
+        inputs.properties(env)
+        outputs.file(jniLibsDir.file("$abi/libtranslatecore.so"))
+
+        // Exec inherits the parent environment, so cargo-ndk picks up ANDROID_NDK_HOME
+        // (or ANDROID_HOME/ndk) on its own — no SDK path to thread through here.
+        // A value exported in the developer's shell must not reach the x86_64 build.
+        environment.remove("GGML_CPU_ARM_ARCH")
+        environment(env)
+        // --platform matches minSdk; llama.cpp's CMake build reads it as ANDROID_PLATFORM.
+        commandLine = listOf(
+            "cargo", "ndk", "--platform", "24",
+            "-t", abi,
+            "-o", jniLibsDir.asFile.absolutePath,
+            "build", "--release",
+        )
+    }
+
+val cargoBuildRustCoreArm64 = registerCargoBuild(
+    "cargoBuildRustCoreArm64", "arm64-v8a", mapOf("GGML_CPU_ARM_ARCH" to ggmlArm64Arch),
+)
+val cargoBuildRustCoreX86 = registerCargoBuild("cargoBuildRustCoreX86", "x86_64", emptyMap())
+// Serialize the two builds; they share one cargo target dir.
+cargoBuildRustCoreX86.configure { mustRunAfter(cargoBuildRustCoreArm64) }
+
+val cargoBuildRustCore = tasks.register("cargoBuildRustCore") {
     group = "build"
     description = "Cross-compiles the Rust core into jniLibs via cargo-ndk."
-    workingDir = rustCoreDir // cargo-ndk resolves the crate from the cwd Cargo.toml
-
-    inputs.dir(rustCoreDir.resolve("src"))
-    inputs.file(rustCoreDir.resolve("Cargo.toml"))
-    inputs.file(rustCoreDir.resolve("Cargo.lock"))
-    inputs.file(rustCoreDir.resolve("build.rs"))
-    outputs.files(androidAbis.map { jniLibsDir.file("$it/libtranslatecore.so") })
-
-    // Exec inherits the parent environment, so cargo-ndk picks up ANDROID_NDK_HOME
-    // (or ANDROID_HOME/ndk) on its own — no SDK path to thread through here.
-    commandLine = buildList {
-        add("cargo"); add("ndk")
-        androidAbis.forEach { add("-t"); add(it) }
-        add("-o"); add(jniLibsDir.asFile.absolutePath)
-        add("build"); add("--release")
-    }
+    dependsOn(cargoBuildRustCoreArm64, cargoBuildRustCoreX86)
 }
 
 // ---- Third-party sherpa-onnx prebuilt libs --------------------------------
@@ -225,7 +251,9 @@ val fetchSherpaPrebuilt = tasks.register("fetchSherpaPrebuilt") {
 
 // build.rs links against jniLibs/<abi>/libsherpa-onnx-c-api.so, so the prebuilt
 // libs must be in place before the Rust core compiles.
-cargoBuildRustCore.configure { dependsOn(fetchSherpaPrebuilt) }
+listOf(cargoBuildRustCoreArm64, cargoBuildRustCoreX86).forEach {
+    it.configure { dependsOn(fetchSherpaPrebuilt) }
+}
 
 // preBuild gates every variant task, so the .so exists before the jniLibs merge.
 tasks.named("preBuild") { dependsOn(cargoBuildRustCore) }
