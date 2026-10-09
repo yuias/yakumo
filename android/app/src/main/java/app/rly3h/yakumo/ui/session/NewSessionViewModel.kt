@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.rly3h.yakumo.data.AsrMode
 import app.rly3h.yakumo.data.LoggedUtterance
 import app.rly3h.yakumo.data.Models
 import app.rly3h.yakumo.data.OnlineProvider
@@ -21,6 +22,7 @@ import app.rly3h.yakumo.translate.OfflineTranslator
 import app.rly3h.yakumo.translate.OpenAiTranslator
 import app.rly3h.yakumo.translate.SpeechTranslator
 import app.rly3h.yakumo.translate.TranslatorCallbacks
+import uniffi.translatecore.mtSupported
 
 private const val IDLE_STATUS = "Tap the mic and speak (EN or JA)."
 
@@ -112,16 +114,23 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
   /**
    * Starts capture. [canGoOnline] carries the screen's live network/key check;
    * the engine choice is snapshotted for the whole session, so toggling mid-run
-   * is not supported (mirrors the streamingAsr capture-once rule).
+   * is not supported (mirrors the ASR mode and MT model capture-once rule).
    */
   fun start(canGoOnline: Boolean) {
     if (recording) return
     val app = getApplication<Application>()
     val useOnline = online && canGoOnline
-    val streamingAsr = settings.streamingAsr
-    if (!useOnline && streamingAsr && !Models.isPresent(app, "asr_stream")) {
-      status = "Streaming model missing — download it in Settings → Experimental."
-      return
+    val asrMode = settings.asrMode
+    val mtModel = settings.mtModel
+    if (!useOnline) {
+      if (!mtSupported()) {
+        status = "Offline translation isn't supported on this device's CPU. Use Online mode."
+        return
+      }
+      if (settings.requiredModelIds().any { !Models.isPresent(app, it) }) {
+        status = "Models missing — download them in Settings → Models."
+        return
+      }
     }
     // Direction is always auto-detected per utterance; the partner choice only
     // resolves which language sits opposite the user.
@@ -130,7 +139,7 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
       useOnline && settings.onlineProvider == OnlineProvider.GEMINI ->
         GeminiTranslator(app, settings, pair, InputMode.AUTO)
       useOnline -> OpenAiTranslator(app, settings, pair, InputMode.AUTO)
-      else -> OfflineTranslator(app, settings, pair, InputMode.AUTO, streamingAsr)
+      else -> OfflineTranslator(app, settings, pair, InputMode.AUTO, asrMode, mtModel)
     }
     translator = engine
     recording = true
@@ -140,7 +149,7 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
     RecordingService.start(app)
     status = when {
       useOnline -> "Connecting…"
-      streamingAsr -> "Listening (streaming EN)…"
+      asrMode == AsrMode.STREAMING -> "Listening (streaming)…"
       else -> "Listening… speak, then tap Stop."
     }
     engine.start(viewModelScope, callbacks)

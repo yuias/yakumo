@@ -9,6 +9,23 @@ import app.rly3h.yakumo.ui.session.languageByFlores
 /** The online speech-translation backend the user picks for Online mode. */
 enum class OnlineProvider { OPENAI, GEMINI }
 
+/** Exclusive offline recognizer choice: VAD-cut SenseVoice segments or the live Nemotron stream. */
+enum class AsrMode { SEGMENTED, STREAMING }
+
+/** Offline translation model; [modelId] is the models.json entry holding its GGUF. */
+enum class MtModel(val modelId: String) { LFM2("mt_lfm2"), HYMT2("mt_hymt2") }
+
+/** Stored mode wins; otherwise the legacy streamingAsr boolean; otherwise SEGMENTED. */
+internal fun migrateAsrMode(stored: String?, legacyStreaming: Boolean?): AsrMode =
+  stored?.let { name -> AsrMode.entries.firstOrNull { it.name == name } }
+    ?: if (legacyStreaming == true) AsrMode.STREAMING else AsrMode.SEGMENTED
+
+/** Models the current selection needs, in download order. */
+internal fun requiredModelIds(mode: AsrMode, mt: MtModel): List<String> = when (mode) {
+  AsrMode.SEGMENTED -> listOf("vad", "asr", mt.modelId)
+  AsrMode.STREAMING -> listOf("asr_stream", mt.modelId)
+}
+
 /** Lightweight user settings backed by SharedPreferences (no extra deps). */
 class Settings(context: Context) {
   private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -21,11 +38,26 @@ class Settings(context: Context) {
     get() = prefs.getBoolean(KEY_AUTO_SPEAK, true)
     set(v) = prefs.edit().putBoolean(KEY_AUTO_SPEAK, v).apply()
 
-  // Experimental: use the streaming (nemotron-en) recognizer for live partial
-  // transcripts. English-only; off by default so the SenseVoice JA path is kept.
+  // Reads the legacy streamingAsr boolean only while no explicit mode has been saved.
+  // Writing the mode drops the legacy key so it can't resurface later.
+  var asrMode: AsrMode
+    get() = migrateAsrMode(
+      prefs.getString(KEY_ASR_MODE, null),
+      if (prefs.contains(KEY_STREAMING_ASR)) prefs.getBoolean(KEY_STREAMING_ASR, false) else null,
+    )
+    set(v) = prefs.edit().putString(KEY_ASR_MODE, v.name).remove(KEY_STREAMING_ASR).apply()
+
+  /** Offline translation model; LFM2 by default, and an unknown stored value also falls back to it. */
+  var mtModel: MtModel
+    get() = MtModel.entries.firstOrNull { it.name == prefs.getString(KEY_MT_MODEL, null) } ?: MtModel.LFM2
+    set(v) = prefs.edit().putString(KEY_MT_MODEL, v.name).apply()
+
+  fun requiredModelIds(): List<String> = requiredModelIds(asrMode, mtModel)
+
+  // Shim for SettingsScreen until it moves to [asrMode].
   var streamingAsr: Boolean
-    get() = prefs.getBoolean(KEY_STREAMING_ASR, false)
-    set(v) = prefs.edit().putBoolean(KEY_STREAMING_ASR, v).apply()
+    get() = asrMode == AsrMode.STREAMING
+    set(v) { asrMode = if (v) AsrMode.STREAMING else AsrMode.SEGMENTED }
 
   // --- Online mode ---
   // Last-used engine toggle (mic-side switch). Offline by default; only honored
@@ -169,7 +201,9 @@ class Settings(context: Context) {
   private companion object {
     const val KEY_RATE = "speechRate"
     const val KEY_AUTO_SPEAK = "autoSpeak"
-    const val KEY_STREAMING_ASR = "streamingAsr"
+    const val KEY_STREAMING_ASR = "streamingAsr" // legacy; superseded by KEY_ASR_MODE
+    const val KEY_ASR_MODE = "asrMode"
+    const val KEY_MT_MODEL = "mtModel"
     const val KEY_ONLINE = "onlineEnabled"
     const val KEY_PROVIDER = "onlineProvider"
     const val KEY_ONLINE_IDLE_GAP = "onlineIdleGapMs"
