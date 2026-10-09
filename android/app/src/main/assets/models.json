@@ -1,12 +1,21 @@
 {
+  "obsoleteDirs": [
+    "silero-vad",
+    "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
+  ],
   "models": [
     {
       "id": "vad",
-      "label": "Voice activity detector (Silero)",
-      "dir": "silero-vad",
+      "label": "Voice activity detector (Silero v6)",
+      "dir": "silero-vad-v6",
       "checkFile": "silero_vad.onnx",
       "files": [
-        { "name": "silero_vad.onnx", "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" }
+        {
+          "name": "silero_vad.onnx",
+          "url": "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx",
+          "size": 2327524,
+          "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+        }
       ]
     },
     {
@@ -21,14 +30,46 @@
     },
     {
       "id": "asr_stream",
-      "label": "Streaming English ASR (Nemotron)",
-      "approxMb": 464,
-      "dir": "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
+      "label": "Streaming speech recognition (Nemotron 3.5)",
+      "approxMb": 475,
+      "dir": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
       "checkFile": "encoder.int8.onnx",
       "archive": {
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2",
-        "format": "tar.bz2"
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+        "format": "tar.bz2",
+        "size": 475271763,
+        "sha256": "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a"
       }
+    },
+    {
+      "id": "mt_lfm2",
+      "label": "Translation EN↔JA (LFM2-350M-ENJP-MT, Q8_0)",
+      "approxMb": 379,
+      "dir": "lfm2-350m-enjp-mt-q8_0",
+      "checkFile": "LFM2-350M-ENJP-MT-Q8_0.gguf",
+      "files": [
+        {
+          "name": "LFM2-350M-ENJP-MT-Q8_0.gguf",
+          "url": "https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/889c88c3d3681b4f342ae210a1d2a1369aba0e10/LFM2-350M-ENJP-MT-Q8_0.gguf",
+          "size": 379215648,
+          "sha256": "261dbe17e21116329b7d131865f4300e3ddfef584999c8bd90ec7e3d199cba7a"
+        }
+      ]
+    },
+    {
+      "id": "mt_hymt2",
+      "label": "Translation, multilingual (Hy-MT2-1.8B, Q4_K_M)",
+      "approxMb": 1133,
+      "dir": "hy-mt2-1.8b-q4_k_m",
+      "checkFile": "Hy-MT2-1.8B-Q4_K_M.gguf",
+      "files": [
+        {
+          "name": "Hy-MT2-1.8B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/a0c709d9fac510f2c807aa3af52872340dc37a4a/Hy-MT2-1.8B-Q4_K_M.gguf",
+          "size": 1133080448,
+          "sha256": "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699"
+        }
+      ]
     },
     {
       "id": "nllb",

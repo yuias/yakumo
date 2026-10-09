@@ -8,9 +8,14 @@ import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 @Serializable
-data class ModelManifest(val models: List<ModelSpec>)
+data class ModelManifest(
+  val models: List<ModelSpec>,
+  // Directories under filesDir left behind by superseded models; Settings offers to delete them.
+  val obsoleteDirs: List<String> = emptyList(),
+)
 
 @Serializable
 data class ModelSpec(
@@ -27,9 +32,31 @@ data class ModelSpec(
   val displayName: String get() = label ?: id
 }
 
-@Serializable data class FileSpec(val name: String, val url: String)
+// size/sha256 are verified before the download is renamed into place; null skips that check.
+@Serializable data class FileSpec(val name: String, val url: String, val size: Long? = null, val sha256: String? = null)
 
-@Serializable data class ArchiveSpec(val url: String, val format: String)
+@Serializable data class ArchiveSpec(val url: String, val format: String, val size: Long? = null, val sha256: String? = null)
+
+/**
+ * Returns a human-readable error when a finished download does not match the manifest,
+ * or null when it is acceptable. A null expectation is not checked; the sha256 comparison
+ * ignores case.
+ */
+internal fun integrityError(
+  name: String,
+  expectedSize: Long?,
+  actualSize: Long,
+  expectedSha256: String?,
+  actualSha256: String,
+): String? {
+  if (expectedSize != null && expectedSize != actualSize) {
+    return "$name: size mismatch (expected $expectedSize bytes, got $actualSize)"
+  }
+  if (expectedSha256 != null && !expectedSha256.equals(actualSha256, ignoreCase = true)) {
+    return "$name: sha256 mismatch (expected $expectedSha256, got $actualSha256)"
+  }
+  return null
+}
 
 /** Thrown by [Models.ensure] when a `cancel` callback returns true mid-transfer. */
 class ModelCancelled : Exception("download cancelled")
@@ -85,6 +112,18 @@ object Models {
     File(context.cacheDir, "$id-archive.part").delete()
   }
 
+  private fun obsoleteDirFiles(context: Context): List<File> =
+    manifest(context).obsoleteDirs.map { File(context.filesDir, it) }.filter { it.exists() }
+
+  /** Bytes used by directories of superseded models listed in `obsoleteDirs`. */
+  fun obsoleteBytes(context: Context): Long =
+    obsoleteDirFiles(context).sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+
+  /** Deletes the `obsoleteDirs`. Blocking — call from an IO thread. */
+  fun deleteObsolete(context: Context) {
+    obsoleteDirFiles(context).forEach { it.deleteRecursively() }
+  }
+
   /**
    * Downloads/extracts the model if missing. Blocking — call from an IO thread.
    * `cancel` is polled during transfer/extraction; returning true aborts with
@@ -113,7 +152,8 @@ object Models {
       val tmp = File(context.cacheDir, "$id-archive")
       val staging = File(context.filesDir, ".staging-$id")
       onProgress("$id: downloading…")
-      download(archive.url, tmp, cancel) { written, total ->
+      // Verified before extraction so a corrupt archive never reaches the staging dir.
+      download(archive.url, tmp, cancel, id, archive.size, archive.sha256) { written, total ->
         onProgress("$id: ${written / 1_000_000} MB")
         onFraction(if (total > 0) written.toFloat() / total else null)
       }
@@ -142,7 +182,7 @@ object Models {
           continue
         }
         onProgress("$id: ${f.name}…")
-        download(f.url, File(dir, f.name), cancel) { written, total ->
+        download(f.url, File(dir, f.name), cancel, "$id/${f.name}", f.size, f.sha256) { written, total ->
           onProgress("$id: ${f.name} ${written / 1_000_000} MB")
           onFraction(if (total > 0) written.toFloat() / total else null)
         }
@@ -153,7 +193,17 @@ object Models {
 
   // Streaming download that manually follows redirects (HF/GitHub CDN hops).
   // onProgress reports (bytesWritten, contentLength); contentLength is -1 when unknown.
-  private fun download(urlStr: String, dest: File, cancel: () -> Boolean, onProgress: (Long, Long) -> Unit) {
+  // The SHA-256 is computed while writing; the .part file is renamed to `dest` only when
+  // size/sha256 match, so a file that exists under its final name is always verified.
+  private fun download(
+    urlStr: String,
+    dest: File,
+    cancel: () -> Boolean,
+    name: String,
+    expectedSize: Long?,
+    expectedSha256: String?,
+    onProgress: (Long, Long) -> Unit,
+  ) {
     var url = urlStr
     var hops = 0
     while (true) {
@@ -177,6 +227,8 @@ object Models {
       val contentLength = conn.contentLengthLong // -1 when the server omits it
       val part = File(dest.parentFile, dest.name + ".part")
       var cancelled = false
+      var total = 0L
+      val digest = MessageDigest.getInstance("SHA-256")
       conn.inputStream.use { input ->
         part.outputStream().use { out ->
           val buf = ByteArray(1 shl 16)
@@ -189,15 +241,22 @@ object Models {
             val n = input.read(buf)
             if (n < 0) break
             out.write(buf, 0, n)
+            digest.update(buf, 0, n)
             written += n
             onProgress(written, contentLength)
           }
+          total = written
         }
       }
       conn.disconnect()
       if (cancelled) {
         part.delete()
         throw ModelCancelled()
+      }
+      val actualSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+      integrityError(name, expectedSize, total, expectedSha256, actualSha256)?.let { msg ->
+        part.delete()
+        throw IllegalStateException(msg)
       }
       if (dest.exists()) dest.delete()
       check(part.renameTo(dest)) { "rename ${part.name} -> ${dest.name} failed" }

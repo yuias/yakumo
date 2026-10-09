@@ -72,7 +72,7 @@ private const val ORT_DYLIB = "libonnxruntime.so"
 
 // Opt-in models: excluded from "Download missing models" and the "all required
 // present" check; shown in the Experimental section instead.
-private val OPTIONAL_MODELS = setOf("asr_stream")
+private val OPTIONAL_MODELS = setOf("asr_stream", "mt_lfm2", "mt_hymt2")
 
 private const val ENGINE_IDLE = "Not loaded. The first session loads them."
 
