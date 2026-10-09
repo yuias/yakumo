@@ -135,6 +135,13 @@ pub fn asr_load(model_dir: String) -> Result<(), AsrError> {
     asr::load(&model_dir).map_err(AsrError::Failed)
 }
 
+/// Frees the resident SenseVoice recognizer. No-op when none is loaded; the next
+/// `asr_load` / `asr_recognize` reloads it.
+#[uniffi::export]
+pub fn asr_unload() {
+    asr::unload()
+}
+
 /// Transcribes 16 kHz mono PCM (signed 16-bit little-endian) with the SenseVoice
 /// model under `model_dir`. Language is auto-detected. Returns the transcript.
 /// Bytes are used over the FFI to avoid boxing tens of thousands of floats.
@@ -162,18 +169,28 @@ pub struct AsrStreamResult {
     pub endpoint: bool,
 }
 
-/// Loads the streaming (nemotron-en) recognizer under `model_dir` and creates its
+/// Loads the streaming (Nemotron 3.5) recognizer under `model_dir` and creates its
 /// resident stream. `rule1`/`rule2`/`rule3` are the endpoint rules in seconds
 /// (trailing silence before / after decoded speech, and max utterance length);
-/// the recognizer is recreated when they change. Idempotent for equal arguments.
+/// the recognizer is recreated when they change. `language` is the stream's
+/// decoding language (`"auto"` or empty for automatic detection); changing it
+/// only updates the live stream. Idempotent for equal arguments.
 #[uniffi::export]
 pub fn asr_stream_load(
     model_dir: String,
     rule1: f32,
     rule2: f32,
     rule3: f32,
+    language: String,
 ) -> Result<(), AsrError> {
-    asr::stream_load(&model_dir, rule1, rule2, rule3).map_err(AsrError::Failed)
+    asr::stream_load(&model_dir, rule1, rule2, rule3, &language).map_err(AsrError::Failed)
+}
+
+/// Frees the resident streaming recognizer and its stream. No-op when none is
+/// loaded; the next `asr_stream_load` / `asr_stream_accept` reloads it.
+#[uniffi::export]
+pub fn asr_stream_unload() {
+    asr::stream_unload()
 }
 
 /// Feeds one chunk of 16 kHz mono PCM (signed 16-bit little-endian) into the
@@ -232,6 +249,12 @@ pub fn vad_load(
 ) -> Result<(), VadError> {
     vad::load(&model_dir, threshold, min_silence_s, min_speech_s, max_speech_s)
         .map_err(VadError::Failed)
+}
+
+/// Frees the resident Silero detector. No-op when none is loaded.
+#[uniffi::export]
+pub fn vad_unload() {
+    vad::unload()
 }
 
 /// Feeds one chunk of 16 kHz mono PCM16 LE into the resident detector and returns

@@ -706,6 +706,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_translatecore_checksum_func_asr_stream_reset(
     ): Int
+    external fun uniffi_translatecore_checksum_func_asr_stream_unload(
+    ): Int
+    external fun uniffi_translatecore_checksum_func_asr_unload(
+    ): Int
     external fun uniffi_translatecore_checksum_func_core_version(
     ): Int
     external fun uniffi_translatecore_checksum_func_greeting(
@@ -738,6 +742,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_translatecore_checksum_func_vad_reset(
     ): Int
+    external fun uniffi_translatecore_checksum_func_vad_unload(
+    ): Int
     external fun uniffi_translatecore_checksum_method_translationsink_on_partial(
     ): Int
     external fun ffi_translatecore_uniffi_contract_version(
@@ -764,9 +770,13 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_translatecore_fn_func_asr_stream_accept(`modelDir`: RustBuffer.ByValue,`pcm16le`: RustBuffer.ByValue,`sampleRate`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_translatecore_fn_func_asr_stream_load(`modelDir`: RustBuffer.ByValue,`rule1`: Float,`rule2`: Float,`rule3`: Float,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_translatecore_fn_func_asr_stream_load(`modelDir`: RustBuffer.ByValue,`rule1`: Float,`rule2`: Float,`rule3`: Float,`language`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_translatecore_fn_func_asr_stream_reset(`modelDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_translatecore_fn_func_asr_stream_unload(uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_translatecore_fn_func_asr_unload(uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_translatecore_fn_func_core_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -799,6 +809,8 @@ internal object UniffiLib {
     external fun uniffi_translatecore_fn_func_vad_load(`modelDir`: RustBuffer.ByValue,`threshold`: Float,`minSilenceS`: Float,`minSpeechS`: Float,`maxSpeechS`: Float,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_translatecore_fn_func_vad_reset(`modelDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_translatecore_fn_func_vad_unload(uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun ffi_translatecore_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -928,10 +940,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_translatecore_checksum_func_asr_stream_accept() and 0xFFFF) != 25770) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if ((lib.uniffi_translatecore_checksum_func_asr_stream_load() and 0xFFFF) != 1011) {
+    if ((lib.uniffi_translatecore_checksum_func_asr_stream_load() and 0xFFFF) != 23263) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_asr_stream_reset() and 0xFFFF) != 31695) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_asr_stream_unload() and 0xFFFF) != 40204) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_asr_unload() and 0xFFFF) != 34244) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_core_version() and 0xFFFF) != 25502) {
@@ -980,6 +998,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_vad_reset() and 0xFFFF) != 39461) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_vad_unload() and 0xFFFF) != 21836) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_method_translationsink_on_partial() and 0xFFFF) != 46971) {
@@ -1671,12 +1692,14 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
     
 
         /**
-         * Loads the streaming (nemotron-en) recognizer under `model_dir` and creates its
+         * Loads the streaming (Nemotron 3.5) recognizer under `model_dir` and creates its
          * resident stream. `rule1`/`rule2`/`rule3` are the endpoint rules in seconds
          * (trailing silence before / after decoded speech, and max utterance length);
-         * the recognizer is recreated when they change. Idempotent for equal arguments.
+         * the recognizer is recreated when they change. `language` is the stream's
+         * decoding language (`"auto"` or empty for automatic detection); changing it
+         * only updates the live stream. Idempotent for equal arguments.
          */
-    @Throws(AsrException::class) fun `asrStreamLoad`(`modelDir`: kotlin.String, `rule1`: kotlin.Float, `rule2`: kotlin.Float, `rule3`: kotlin.Float)
+    @Throws(AsrException::class) fun `asrStreamLoad`(`modelDir`: kotlin.String, `rule1`: kotlin.Float, `rule2`: kotlin.Float, `rule3`: kotlin.Float, `language`: kotlin.String)
         = 
     uniffiRustCallWithError(AsrException) { _status ->
     UniffiLib.uniffi_translatecore_fn_func_asr_stream_load(
@@ -1685,7 +1708,8 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
         FfiConverterString.lower(`modelDir`),
         FfiConverterFloat.lower(`rule1`),
         FfiConverterFloat.lower(`rule2`),
-        FfiConverterFloat.lower(`rule3`),_status)
+        FfiConverterFloat.lower(`rule3`),
+        FfiConverterString.lower(`language`),_status)
 }
     
     
@@ -1701,6 +1725,32 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
     
         
         FfiConverterString.lower(`modelDir`),_status)
+}
+    
+    
+
+        /**
+         * Frees the resident streaming recognizer and its stream. No-op when none is
+         * loaded; the next `asr_stream_load` / `asr_stream_accept` reloads it.
+         */ fun `asrStreamUnload`()
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_asr_stream_unload(
+    
+        _status)
+}
+    
+    
+
+        /**
+         * Frees the resident SenseVoice recognizer. No-op when none is loaded; the next
+         * `asr_load` / `asr_recognize` reloads it.
+         */ fun `asrUnload`()
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_asr_unload(
+    
+        _status)
 }
     
     
@@ -1966,6 +2016,18 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
     
         
         FfiConverterString.lower(`modelDir`),_status)
+}
+    
+    
+
+        /**
+         * Frees the resident Silero detector. No-op when none is loaded.
+         */ fun `vadUnload`()
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_vad_unload(
+    
+        _status)
 }
     
     

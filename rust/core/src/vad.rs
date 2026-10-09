@@ -40,6 +40,15 @@ pub fn reset(model_dir: &str) -> Result<(), String> {
     imp::reset(model_dir)
 }
 
+/// Drops the resident detector (no-op if none).
+#[cfg(target_os = "android")]
+pub fn unload() {
+    imp::unload()
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn unload() {}
+
 #[cfg(not(target_os = "android"))]
 pub fn load(
     _model_dir: &str,
@@ -129,7 +138,7 @@ mod imp {
         fn SherpaOnnxVoiceActivityDetectorFlush(p: *const c_void);
     }
 
-    // Silero v4 expects 512-sample (32 ms @ 16 kHz) analysis windows.
+    // Silero v5/v6 expect 512-sample (32 ms @ 16 kHz) analysis windows.
     const WINDOW_SIZE: i32 = 512;
     // Detector ring buffer; must comfortably exceed max_speech_duration.
     const BUFFER_SECONDS: f32 = 30.0;
@@ -255,6 +264,11 @@ mod imp {
             },
         )?;
         Ok(())
+    }
+
+    pub fn unload() {
+        // A poisoned lock still guards a valid Option; dropping the engine is the goal.
+        *engine_cell().lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub fn accept(model_dir: &str, samples: &[f32], _sample_rate: i32) -> Result<Vec<Vec<f32>>, String> {

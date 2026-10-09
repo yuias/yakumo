@@ -2,7 +2,8 @@
 //!
 //! The recognizer is expensive to build but reusable, so it is kept resident in
 //! a process-global keyed by `model_dir`; only the lightweight per-utterance
-//! stream is created on each call.
+//! stream is created on each call. `unload` frees it when the app switches away
+//! from this engine.
 
 #[cfg(target_os = "android")]
 pub fn load(model_dir: &str) -> Result<(), String> {
@@ -20,6 +21,15 @@ pub fn recognize(
     imp::recognize(model_dir, samples, sample_rate)
 }
 
+/// Drops the resident recognizer (no-op if none). Waits for a recognition in flight.
+#[cfg(target_os = "android")]
+pub fn unload() {
+    imp::unload()
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn unload() {}
+
 #[cfg(not(target_os = "android"))]
 pub fn load(_model_dir: &str) -> Result<(), String> {
     Err("ASR is only available on Android (native sherpa-onnx not linked on host)".to_owned())
@@ -34,17 +44,34 @@ pub fn recognize(
     Err("ASR is only available on Android (native sherpa-onnx not linked on host)".to_owned())
 }
 
-// --- Streaming (online) ASR: nemotron-speech-streaming-en via sherpa-onnx's
+// --- Streaming (online) ASR: Nemotron 3.5 (multilingual) via sherpa-onnx's
 // OnlineRecognizer. A separate engine from the offline SenseVoice path above;
 // the recognizer and its single stream are kept resident across chunks. ---
 
 /// Loads/configures the streaming recognizer. The three endpoint rules (trailing
 /// silence in seconds before / after decoded speech, and max utterance length)
 /// are baked into the recognizer at creation, so changing them recreates it.
+/// `language` is a stream option (not recognizer config), so changing it only
+/// updates the live stream.
 #[cfg(target_os = "android")]
-pub fn stream_load(model_dir: &str, rule1: f32, rule2: f32, rule3: f32) -> Result<(), String> {
-    stream_imp::load(model_dir, rule1, rule2, rule3)
+pub fn stream_load(
+    model_dir: &str,
+    rule1: f32,
+    rule2: f32,
+    rule3: f32,
+    language: &str,
+) -> Result<(), String> {
+    stream_imp::load(model_dir, rule1, rule2, rule3, language)
 }
+
+/// Drops the resident recognizer and stream (no-op if none).
+#[cfg(target_os = "android")]
+pub fn stream_unload() {
+    stream_imp::unload()
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn stream_unload() {}
 
 /// Feeds one chunk of mono f32 PCM into the resident stream and decodes whatever
 /// is ready. Returns `(partial_text, is_endpoint)`; on an endpoint the stream is
@@ -65,7 +92,13 @@ pub fn stream_reset(model_dir: &str) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "android"))]
-pub fn stream_load(_model_dir: &str, _rule1: f32, _rule2: f32, _rule3: f32) -> Result<(), String> {
+pub fn stream_load(
+    _model_dir: &str,
+    _rule1: f32,
+    _rule2: f32,
+    _rule3: f32,
+    _language: &str,
+) -> Result<(), String> {
     Err("streaming ASR is only available on Android".to_owned())
 }
 
@@ -392,6 +425,11 @@ mod imp {
         Ok(())
     }
 
+    pub fn unload() {
+        // A poisoned lock still guards a valid Option; dropping the engine is the goal.
+        *engine_cell().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
     unsafe fn cstr(p: *const c_char) -> String {
         if p.is_null() {
             String::new()
@@ -537,6 +575,12 @@ mod stream_imp {
         fn SherpaOnnxDestroyOnlineRecognizer(recognizer: *const c_void);
         fn SherpaOnnxCreateOnlineStream(recognizer: *const c_void) -> *const c_void;
         fn SherpaOnnxDestroyOnlineStream(stream: *const c_void);
+        // Options survive `SherpaOnnxOnlineStreamReset`; "" and "auto" select the default prompt.
+        fn SherpaOnnxOnlineStreamSetOption(
+            stream: *const c_void,
+            key: *const c_char,
+            value: *const c_char,
+        );
         fn SherpaOnnxOnlineStreamAcceptWaveform(
             stream: *const c_void,
             sample_rate: i32,
@@ -560,6 +604,9 @@ mod stream_imp {
         ) -> i32;
     }
 
+    // Nemotron 3.5 is multilingual; "auto" lets it pick the language per utterance.
+    const DEFAULT_LANGUAGE: &str = "auto";
+
     /// Endpoint rules (seconds), baked into the recognizer at creation.
     #[derive(Clone, Copy, PartialEq)]
     struct EndpointRules {
@@ -580,6 +627,7 @@ mod stream_imp {
     struct StreamEngine {
         model_dir: String,
         rules: EndpointRules,
+        language: String,
         recognizer: *const c_void,
         stream: *const c_void,
     }
@@ -601,7 +649,20 @@ mod stream_imp {
         ENGINE.get_or_init(|| Mutex::new(None))
     }
 
-    fn create_engine(model_dir: &str, rules: EndpointRules) -> Result<StreamEngine, String> {
+    /// Sets the stream's decoding language. Sherpa reads it per stream, which is
+    /// why it can change without recreating the recognizer.
+    fn set_language(stream: *const c_void, language: &str) -> Result<(), String> {
+        let key = CString::new("language").unwrap();
+        let value = CString::new(language).map_err(|e| e.to_string())?;
+        unsafe { SherpaOnnxOnlineStreamSetOption(stream, key.as_ptr(), value.as_ptr()) };
+        Ok(())
+    }
+
+    fn create_engine(
+        model_dir: &str,
+        rules: EndpointRules,
+        language: &str,
+    ) -> Result<StreamEngine, String> {
         let dir = Path::new(model_dir);
         let encoder_path = dir.join("encoder.int8.onnx");
         let decoder_path = dir.join("decoder.int8.onnx");
@@ -633,7 +694,7 @@ mod stream_imp {
         cfg.model_config.provider = provider.as_ptr();
         cfg.model_config.debug = 1;
         // model_type left empty: sherpa auto-detects the transducer flavor from
-        // the encoder metadata (the streaming nemotron model needs no flag).
+        // the encoder metadata (the streaming Nemotron model needs no flag).
         cfg.decoding_method = decoding.as_ptr();
         cfg.enable_endpoint = 1;
         cfg.rule1_min_trailing_silence = rules.rule1;
@@ -649,45 +710,72 @@ mod stream_imp {
             unsafe { SherpaOnnxDestroyOnlineRecognizer(recognizer) };
             return Err("SherpaOnnxCreateOnlineStream returned null".to_owned());
         }
-        Ok(StreamEngine {
+        // Build the engine before SetOption so its Drop frees both handles on failure.
+        let engine = StreamEngine {
             model_dir: model_dir.to_owned(),
             rules,
+            language: language.to_owned(),
             recognizer,
             stream,
-        })
+        };
+        set_language(engine.stream, language)?;
+        Ok(engine)
     }
 
     /// Loads the engine, recreating it when `model_dir` or the endpoint `rules`
-    /// differ from what is resident (rules are immutable post-creation).
+    /// differ from what is resident (rules are immutable post-creation). A
+    /// different `language` alone is applied to the existing stream.
     fn ensure_loaded<'a>(
         guard: &'a mut Option<StreamEngine>,
         model_dir: &str,
         rules: EndpointRules,
+        language: &str,
     ) -> Result<&'a StreamEngine, String> {
         let stale = match guard.as_ref() {
             Some(e) => e.model_dir != model_dir || e.rules != rules,
             None => true,
         };
         if stale {
-            *guard = Some(create_engine(model_dir, rules)?);
+            *guard = Some(create_engine(model_dir, rules, language)?);
+        } else if let Some(e) = guard.as_mut() {
+            if e.language != language {
+                set_language(e.stream, language)?;
+                e.language = language.to_owned();
+            }
         }
         Ok(guard.as_ref().expect("engine just loaded"))
     }
 
     /// Reuses the resident engine for `model_dir`, or creates one with default
-    /// rules if none is loaded yet (a fallback; callers normally `load` first).
+    /// rules and language if none is loaded yet (a fallback; callers normally
+    /// `load` first, including after an unload).
     fn ensure_any<'a>(
         guard: &'a mut Option<StreamEngine>,
         model_dir: &str,
     ) -> Result<&'a StreamEngine, String> {
         let rules = guard.as_ref().map_or_else(EndpointRules::default, |e| e.rules);
-        ensure_loaded(guard, model_dir, rules)
+        let language = guard
+            .as_ref()
+            .map_or_else(|| DEFAULT_LANGUAGE.to_owned(), |e| e.language.clone());
+        ensure_loaded(guard, model_dir, rules, &language)
     }
 
-    pub fn load(model_dir: &str, rule1: f32, rule2: f32, rule3: f32) -> Result<(), String> {
+    pub fn load(
+        model_dir: &str,
+        rule1: f32,
+        rule2: f32,
+        rule3: f32,
+        language: &str,
+    ) -> Result<(), String> {
+        let language = if language.is_empty() { DEFAULT_LANGUAGE } else { language };
         let mut guard = engine_cell().lock().map_err(|e| e.to_string())?;
-        ensure_loaded(&mut guard, model_dir, EndpointRules { rule1, rule2, rule3 })?;
+        ensure_loaded(&mut guard, model_dir, EndpointRules { rule1, rule2, rule3 }, language)?;
         Ok(())
+    }
+
+    pub fn unload() {
+        // A poisoned lock still guards a valid Option; dropping the engine is the goal.
+        *engine_cell().lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     unsafe fn cstr(p: *const c_char) -> String {

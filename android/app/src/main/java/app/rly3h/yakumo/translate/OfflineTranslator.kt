@@ -150,7 +150,7 @@ internal class OfflineTranslator(
   private suspend fun runStreaming(cb: TranslatorCallbacks) = coroutineScope {
     val ep = settings.endpointParams() // latest knobs at the start of this session
     withContext(Dispatchers.IO) {
-      asrStreamLoad(streamDir.absolutePath, ep.rule1, ep.rule2, ep.rule3)
+      asrStreamLoad(streamDir.absolutePath, ep.rule1, ep.rule2, ep.rule3, "auto")
       asrStreamReset(streamDir.absolutePath)
     }
     val channel = Channel<ByteArray>(Channel.UNLIMITED)
