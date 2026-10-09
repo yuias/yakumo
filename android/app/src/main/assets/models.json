@@ -1,7 +1,8 @@
 {
   "obsoleteDirs": [
     "silero-vad",
-    "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
+    "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
+    "nllb"
   ],
   "models": [
     {
@@ -69,17 +70,6 @@
           "size": 1133080448,
           "sha256": "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699"
         }
-      ]
-    },
-    {
-      "id": "nllb",
-      "label": "Translation (NLLB-200)",
-      "dir": "nllb",
-      "checkFile": "decoder_model_merged_quantized.onnx",
-      "files": [
-        { "name": "encoder_model_quantized.onnx", "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/onnx/encoder_model_quantized.onnx" },
-        { "name": "decoder_model_merged_quantized.onnx", "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/onnx/decoder_model_merged_quantized.onnx" },
-        { "name": "tokenizer.json", "url": "https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/tokenizer.json" }
       ]
     }
   ]

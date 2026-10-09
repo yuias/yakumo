@@ -1,13 +1,12 @@
 //! translatecore — native pipeline core exposed to the Android app via UniFFI.
 //!
-//! PoC stage: only proves the Rust -> Kotlin bridge end to end. The real
-//! TranslationEngine abstraction (NLLB / LLM / Realtime) lands in later phases.
+//! Hosts the on-device speech stack: Silero VAD and sherpa-onnx ASR (`vad`,
+//! `asr`) and llama.cpp GGUF translation (`mt`).
 
 uniffi::setup_scaffolding!();
 
 mod asr;
 mod mt;
-mod translate;
 mod vad;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -16,58 +15,11 @@ pub enum TranslateError {
     Failed(String),
 }
 
-/// Step A smoke: load onnxruntime via `ort` and open an ONNX model on device.
-#[uniffi::export]
-pub fn translate_smoke(ort_dylib: String, model_path: String) -> Result<String, TranslateError> {
-    translate::smoke(&ort_dylib, &model_path).map_err(TranslateError::Failed)
-}
-
-/// Loads the NLLB models under `model_dir` into the resident engine without
-/// translating, so the UI can warm them up once and surface a "loaded" state.
-/// Idempotent: a no-op when the same `model_dir` is already resident.
-#[uniffi::export]
-pub fn translate_load(model_dir: String, ort_dylib: String) -> Result<(), TranslateError> {
-    translate::load(&model_dir, &ort_dylib).map_err(TranslateError::Failed)
-}
-
-/// Translates `text` from `src_lang` to `tgt_lang` (NLLB FLORES codes, e.g.
-/// "eng_Latn", "jpn_Jpan") using the NLLB ONNX models under `model_dir`. Loads
-/// the models on first use, then reuses the resident engine.
-#[uniffi::export]
-pub fn translate_text(
-    model_dir: String,
-    text: String,
-    src_lang: String,
-    tgt_lang: String,
-    ort_dylib: String,
-) -> Result<String, TranslateError> {
-    translate::translate(&model_dir, &text, &src_lang, &tgt_lang, &ort_dylib)
-        .map_err(TranslateError::Failed)
-}
-
 /// Receives the partial translation as it is generated, one call per decoded
 /// token with the text decoded so far. Implemented on the foreign (Kotlin) side.
 #[uniffi::export(callback_interface)]
 pub trait TranslationSink: Send {
     fn on_partial(&self, text: String);
-}
-
-/// Streaming variant of [`translate_text`]: returns the final translation and, as
-/// it decodes, pushes each growing partial to `sink` so the UI can render the
-/// translation left-to-right. Callbacks arrive on the calling thread.
-#[uniffi::export]
-pub fn translate_text_streaming(
-    model_dir: String,
-    text: String,
-    src_lang: String,
-    tgt_lang: String,
-    ort_dylib: String,
-    sink: Box<dyn TranslationSink>,
-) -> Result<String, TranslateError> {
-    translate::translate_streaming(&model_dir, &text, &src_lang, &tgt_lang, &ort_dylib, |s| {
-        sink.on_partial(s.to_owned())
-    })
-    .map_err(TranslateError::Failed)
 }
 
 /// True when this device can run the llama.cpp translator (arm64 needs dot-product

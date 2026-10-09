@@ -173,8 +173,10 @@ val cargoBuildRustCore = tasks.register("cargoBuildRustCore") {
 
 // ---- Third-party sherpa-onnx prebuilt libs --------------------------------
 // libonnxruntime.so + libsherpa-onnx-{c,cxx}-api.so are prebuilt binaries from
-// the sherpa-onnx release, fetched at build time rather than committed. They
-// must land in jniLibs before cargoBuildRustCore links libsherpa-onnx-c-api.so
+// the sherpa-onnx release, fetched at build time rather than committed.
+// libonnxruntime.so is only here because sherpa links it; the Rust core has no
+// ONNX Runtime binding of its own. They must land in jniLibs before
+// cargoBuildRustCore links libsherpa-onnx-c-api.so
 // (build.rs) and before AGP merges jniLibs into the APK.
 val sherpaVersion = "1.13.8"
 val sherpaLibs = listOf(

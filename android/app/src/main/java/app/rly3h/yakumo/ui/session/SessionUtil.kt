@@ -13,7 +13,7 @@ internal fun isJapanese(text: String): Boolean =
  * A language the translation pair can be set to. The single source of truth for
  * everything language-specific; supporting one more language is one more row.
  *
- * @param flores NLLB FLORES-200 code passed to the translator
+ * @param flores FLORES-200 code passed to the translator
  * @param asrTag substring of the SenseVoice tag ("<|en|>" contains "en")
  * @param label  full name shown in the picker
  * @param short  two-letter badge shown on a turn card

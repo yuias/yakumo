@@ -726,14 +726,6 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_translatecore_checksum_func_sherpa_version(
     ): Int
-    external fun uniffi_translatecore_checksum_func_translate_load(
-    ): Int
-    external fun uniffi_translatecore_checksum_func_translate_smoke(
-    ): Int
-    external fun uniffi_translatecore_checksum_func_translate_text(
-    ): Int
-    external fun uniffi_translatecore_checksum_func_translate_text_streaming(
-    ): Int
     external fun uniffi_translatecore_checksum_func_vad_accept(
     ): Int
     external fun uniffi_translatecore_checksum_func_vad_flush(
@@ -793,14 +785,6 @@ internal object UniffiLib {
     external fun uniffi_translatecore_fn_func_mt_unload(uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_translatecore_fn_func_sherpa_version(uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_translatecore_fn_func_translate_load(`modelDir`: RustBuffer.ByValue,`ortDylib`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_translatecore_fn_func_translate_smoke(`ortDylib`: RustBuffer.ByValue,`modelPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_translatecore_fn_func_translate_text(`modelDir`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`srcLang`: RustBuffer.ByValue,`tgtLang`: RustBuffer.ByValue,`ortDylib`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_translatecore_fn_func_translate_text_streaming(`modelDir`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`srcLang`: RustBuffer.ByValue,`tgtLang`: RustBuffer.ByValue,`ortDylib`: RustBuffer.ByValue,`sink`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_translatecore_fn_func_vad_accept(`modelDir`: RustBuffer.ByValue,`pcm16le`: RustBuffer.ByValue,`sampleRate`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -974,18 +958,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_sherpa_version() and 0xFFFF) != 53038) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_translatecore_checksum_func_translate_load() and 0xFFFF) != 7735) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_translatecore_checksum_func_translate_smoke() and 0xFFFF) != 55417) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_translatecore_checksum_func_translate_text() and 0xFFFF) != 28256) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if ((lib.uniffi_translatecore_checksum_func_translate_text_streaming() and 0xFFFF) != 29506) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_vad_accept() and 0xFFFF) != 40090) {
@@ -1869,82 +1841,6 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
     UniffiLib.uniffi_translatecore_fn_func_sherpa_version(
     
         _status)
-}
-    )
-    }
-    
-
-        /**
-         * Loads the NLLB models under `model_dir` into the resident engine without
-         * translating, so the UI can warm them up once and surface a "loaded" state.
-         * Idempotent: a no-op when the same `model_dir` is already resident.
-         */
-    @Throws(TranslateException::class) fun `translateLoad`(`modelDir`: kotlin.String, `ortDylib`: kotlin.String)
-        = 
-    uniffiRustCallWithError(TranslateException) { _status ->
-    UniffiLib.uniffi_translatecore_fn_func_translate_load(
-    
-        
-        FfiConverterString.lower(`modelDir`),
-        FfiConverterString.lower(`ortDylib`),_status)
-}
-    
-    
-
-        /**
-         * Step A smoke: load onnxruntime via `ort` and open an ONNX model on device.
-         */
-    @Throws(TranslateException::class) fun `translateSmoke`(`ortDylib`: kotlin.String, `modelPath`: kotlin.String): kotlin.String {
-            return FfiConverterString.lift(
-    uniffiRustCallWithError(TranslateException) { _status ->
-    UniffiLib.uniffi_translatecore_fn_func_translate_smoke(
-    
-        
-        FfiConverterString.lower(`ortDylib`),
-        FfiConverterString.lower(`modelPath`),_status)
-}
-    )
-    }
-    
-
-        /**
-         * Translates `text` from `src_lang` to `tgt_lang` (NLLB FLORES codes, e.g.
-         * "eng_Latn", "jpn_Jpan") using the NLLB ONNX models under `model_dir`. Loads
-         * the models on first use, then reuses the resident engine.
-         */
-    @Throws(TranslateException::class) fun `translateText`(`modelDir`: kotlin.String, `text`: kotlin.String, `srcLang`: kotlin.String, `tgtLang`: kotlin.String, `ortDylib`: kotlin.String): kotlin.String {
-            return FfiConverterString.lift(
-    uniffiRustCallWithError(TranslateException) { _status ->
-    UniffiLib.uniffi_translatecore_fn_func_translate_text(
-    
-        
-        FfiConverterString.lower(`modelDir`),
-        FfiConverterString.lower(`text`),
-        FfiConverterString.lower(`srcLang`),
-        FfiConverterString.lower(`tgtLang`),
-        FfiConverterString.lower(`ortDylib`),_status)
-}
-    )
-    }
-    
-
-        /**
-         * Streaming variant of [`translate_text`]: returns the final translation and, as
-         * it decodes, pushes each growing partial to `sink` so the UI can render the
-         * translation left-to-right. Callbacks arrive on the calling thread.
-         */
-    @Throws(TranslateException::class) fun `translateTextStreaming`(`modelDir`: kotlin.String, `text`: kotlin.String, `srcLang`: kotlin.String, `tgtLang`: kotlin.String, `ortDylib`: kotlin.String, `sink`: TranslationSink): kotlin.String {
-            return FfiConverterString.lift(
-    uniffiRustCallWithError(TranslateException) { _status ->
-    UniffiLib.uniffi_translatecore_fn_func_translate_text_streaming(
-    
-        
-        FfiConverterString.lower(`modelDir`),
-        FfiConverterString.lower(`text`),
-        FfiConverterString.lower(`srcLang`),
-        FfiConverterString.lower(`tgtLang`),
-        FfiConverterString.lower(`ortDylib`),
-        FfiConverterTypeTranslationSink.lower(`sink`),_status)
 }
     )
     }
