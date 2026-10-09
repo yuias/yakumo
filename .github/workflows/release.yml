@@ -52,6 +52,14 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
+      # llama.cpp is built by CMake with the Ninja generator (rust/core/.cargo/config.toml).
+      # Printing the versions here fails early if a tool is missing.
+      - name: Check CMake and Ninja
+        run: |
+          command -v ninja >/dev/null || { sudo apt-get update && sudo apt-get install -y ninja-build; }
+          cmake --version
+          ninja --version
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 

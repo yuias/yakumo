@@ -27,6 +27,7 @@ Android 向けの英語↔日本語音声翻訳アプリ。既定では、初回
   ```sh
   cargo install cargo-ndk
   ```
+- **CMake(3.22 以上)と Ninja**: llama.cpp のビルドに使う。どちらも PATH 上に必要(Windows / Linux / macOS 共通)。Android SDK の `cmake;<ver>` パッケージ(`cmake` と `ninja` の両方を同梱)をインストールして `<ANDROID_HOME>/cmake/<ver>/bin` を PATH に通すか、システムのパッケージマネージャで入れる。`rust/build-android.ps1` は `cmake` が見つからないとき、最新の Android SDK 版を自動で PATH に追加する。`rust/core/.cargo/config.toml` が `CMAKE_GENERATOR=Ninja` を指定している(cmake-rs は Android ターゲットに `-G` を渡さず、Windows では Visual Studio ジェネレータが選ばれて NDK を駆動できないため)。
 
 ### ビルドとインストール
 
@@ -41,6 +42,8 @@ cd android
 2. **`cargoBuildRustCore`** — `rust/core` を cargo-ndk でクロスコンパイルし、`jniLibs/<abi>/libtranslatecore.so` を生成する。`build.rs` が `libsherpa-onnx-c-api.so` にリンクするため、fetch の後に実行する必要がある。
 
 どちらも入出力を宣言しているので、変更がなければスキップされる。対応 ABI は **arm64-v8a**(実機)と **x86_64**(エミュレータ)。
+
+クリーンビルドでは各 ABI 向けに llama.cpp もコンパイルするため、時間がかかる(ローカルで 2 分前後)。arm64 の ggml-cpu は dot-product 命令つき(`GGML_CPU_ARM_ARCH=armv8.2-a+dotprod`)でビルドする。この変数は `android/app/build.gradle.kts` と `rust/build-android.ps1` が arm64 のときだけ設定する(llama-cpp-sys-2 は `GGML_*` 環境変数を全 ABI の CMake に渡すため、`rust/core/.cargo/config.toml` には置かない)。x86_64 はベースラインのまま。
 
 APK は `android/app/build/outputs/apk/debug/app-debug.apk` に出力される。`adb install`(または任意の Android CLI)でインストールして起動し、最初の翻訳の前に **Settings → Models → Download missing models** を実行する。モデルごとの行から個別にダウンロード・削除もでき、取得済みのモデルは削除してから再ダウンロードする。実験的なストリーミング ASR モデル(`asr_stream`)はサイズが大きく英語専用なので、この一括ダウンロードには含まれず、**Settings → Experimental**(折りたたみ)の中のモデル行から個別に取得する。
 
