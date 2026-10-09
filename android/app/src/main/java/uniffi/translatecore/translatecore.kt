@@ -710,9 +710,15 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_translatecore_checksum_func_greeting(
     ): Int
+    external fun uniffi_translatecore_checksum_func_mt_load(
+    ): Int
     external fun uniffi_translatecore_checksum_func_mt_supported(
     ): Int
     external fun uniffi_translatecore_checksum_func_mt_system_info(
+    ): Int
+    external fun uniffi_translatecore_checksum_func_mt_translate_streaming(
+    ): Int
+    external fun uniffi_translatecore_checksum_func_mt_unload(
     ): Int
     external fun uniffi_translatecore_checksum_func_sherpa_version(
     ): Int
@@ -766,10 +772,16 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_translatecore_fn_func_greeting(`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_translatecore_fn_func_mt_load(`modelPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_translatecore_fn_func_mt_supported(uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_translatecore_fn_func_mt_system_info(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_translatecore_fn_func_mt_translate_streaming(`modelPath`: RustBuffer.ByValue,`text`: RustBuffer.ByValue,`srcLang`: RustBuffer.ByValue,`tgtLang`: RustBuffer.ByValue,`sink`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_translatecore_fn_func_mt_unload(uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_translatecore_fn_func_sherpa_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_translatecore_fn_func_translate_load(`modelDir`: RustBuffer.ByValue,`ortDylib`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -928,10 +940,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if ((lib.uniffi_translatecore_checksum_func_greeting() and 0xFFFF) != 47274) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if ((lib.uniffi_translatecore_checksum_func_mt_load() and 0xFFFF) != 29817) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if ((lib.uniffi_translatecore_checksum_func_mt_supported() and 0xFFFF) != 60784) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_mt_system_info() and 0xFFFF) != 9006) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_mt_translate_streaming() and 0xFFFF) != 22282) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_mt_unload() and 0xFFFF) != 24266) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_sherpa_version() and 0xFFFF) != 53038) {
@@ -1713,6 +1734,22 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
     
 
         /**
+         * Loads the GGUF at `model_path` (a file, not a directory) into the resident
+         * translation engine. Idempotent for the same path; a different path frees the
+         * old model before loading the new one.
+         */
+    @Throws(TranslateException::class) fun `mtLoad`(`modelPath`: kotlin.String)
+        = 
+    uniffiRustCallWithError(TranslateException) { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_mt_load(
+    
+        
+        FfiConverterString.lower(`modelPath`),_status)
+}
+    
+    
+
+        /**
          * True when this device can run the llama.cpp translator (arm64 needs dot-product
          * instructions). Cheap and safe to call before any model exists.
          */ fun `mtSupported`(): kotlin.Boolean {
@@ -1737,6 +1774,39 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
 }
     )
     }
+    
+
+        /**
+         * Translates `text` between FLORES-coded languages with the GGUF at `model_path`
+         * (loaded lazily like [`mt_load`]). Returns the final translation and pushes the
+         * cumulative text so far to `sink` as tokens decode, on the calling thread.
+         */
+    @Throws(TranslateException::class) fun `mtTranslateStreaming`(`modelPath`: kotlin.String, `text`: kotlin.String, `srcLang`: kotlin.String, `tgtLang`: kotlin.String, `sink`: TranslationSink): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(TranslateException) { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_mt_translate_streaming(
+    
+        
+        FfiConverterString.lower(`modelPath`),
+        FfiConverterString.lower(`text`),
+        FfiConverterString.lower(`srcLang`),
+        FfiConverterString.lower(`tgtLang`),
+        FfiConverterTypeTranslationSink.lower(`sink`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Frees the resident translation model. No-op when none is loaded.
+         */ fun `mtUnload`()
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_mt_unload(
+    
+        _status)
+}
+    
     
 
         /**

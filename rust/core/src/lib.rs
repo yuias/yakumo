@@ -83,6 +83,37 @@ pub fn mt_system_info() -> String {
     mt::system_info()
 }
 
+/// Loads the GGUF at `model_path` (a file, not a directory) into the resident
+/// translation engine. Idempotent for the same path; a different path frees the
+/// old model before loading the new one.
+#[uniffi::export]
+pub fn mt_load(model_path: String) -> Result<(), TranslateError> {
+    mt::load(&model_path).map_err(TranslateError::Failed)
+}
+
+/// Translates `text` between FLORES-coded languages with the GGUF at `model_path`
+/// (loaded lazily like [`mt_load`]). Returns the final translation and pushes the
+/// cumulative text so far to `sink` as tokens decode, on the calling thread.
+#[uniffi::export]
+pub fn mt_translate_streaming(
+    model_path: String,
+    text: String,
+    src_lang: String,
+    tgt_lang: String,
+    sink: Box<dyn TranslationSink>,
+) -> Result<String, TranslateError> {
+    mt::translate_streaming(&model_path, &text, &src_lang, &tgt_lang, |s| {
+        sink.on_partial(s.to_owned())
+    })
+    .map_err(TranslateError::Failed)
+}
+
+/// Frees the resident translation model. No-op when none is loaded.
+#[uniffi::export]
+pub fn mt_unload() {
+    mt::unload()
+}
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum AsrError {
     #[error("{0}")]
