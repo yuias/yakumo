@@ -6,6 +6,7 @@
 uniffi::setup_scaffolding!();
 
 mod asr;
+mod mt;
 mod translate;
 mod vad;
 
@@ -67,6 +68,19 @@ pub fn translate_text_streaming(
         sink.on_partial(s.to_owned())
     })
     .map_err(TranslateError::Failed)
+}
+
+/// True when this device can run the llama.cpp translator (arm64 needs dot-product
+/// instructions). Cheap and safe to call before any model exists.
+#[uniffi::export]
+pub fn mt_supported() -> bool {
+    mt::cpu_supported()
+}
+
+/// llama.cpp's CPU feature summary when supported, otherwise a one-line reason.
+#[uniffi::export]
+pub fn mt_system_info() -> String {
+    mt::system_info()
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]

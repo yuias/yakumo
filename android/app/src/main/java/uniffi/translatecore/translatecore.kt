@@ -710,6 +710,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_translatecore_checksum_func_greeting(
     ): Int
+    external fun uniffi_translatecore_checksum_func_mt_supported(
+    ): Int
+    external fun uniffi_translatecore_checksum_func_mt_system_info(
+    ): Int
     external fun uniffi_translatecore_checksum_func_sherpa_version(
     ): Int
     external fun uniffi_translatecore_checksum_func_translate_load(
@@ -761,6 +765,10 @@ internal object UniffiLib {
     external fun uniffi_translatecore_fn_func_core_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_translatecore_fn_func_greeting(`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_translatecore_fn_func_mt_supported(uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_translatecore_fn_func_mt_system_info(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_translatecore_fn_func_sherpa_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -918,6 +926,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_greeting() and 0xFFFF) != 47274) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_mt_supported() and 0xFFFF) != 60784) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if ((lib.uniffi_translatecore_checksum_func_mt_system_info() and 0xFFFF) != 9006) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if ((lib.uniffi_translatecore_checksum_func_sherpa_version() and 0xFFFF) != 53038) {
@@ -1693,6 +1707,33 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
     
         
         FfiConverterString.lower(`name`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * True when this device can run the llama.cpp translator (arm64 needs dot-product
+         * instructions). Cheap and safe to call before any model exists.
+         */ fun `mtSupported`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_mt_supported(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * llama.cpp's CPU feature summary when supported, otherwise a one-line reason.
+         */ fun `mtSystemInfo`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_translatecore_fn_func_mt_system_info(
+    
+        _status)
 }
     )
     }
