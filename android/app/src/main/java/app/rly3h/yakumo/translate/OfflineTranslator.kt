@@ -117,7 +117,11 @@ internal class OfflineTranslator(
     } catch (e: Throwable) {
       // Keep capturing: a failed translation (unsupported pair, missing file) only
       // costs this turn's translation, not the session.
-      withContext(Dispatchers.Main) { cb.onStatus("Translation error: ${e.message}") }
+      withContext(Dispatchers.Main) {
+        // Clear the "…" placeholder so the row doesn't look like it's still translating.
+        cb.onTurnUpdate(id, translation = "")
+        cb.onStatus("Translation error: ${e.message}")
+      }
       return
     }
     withContext(Dispatchers.Main) {
