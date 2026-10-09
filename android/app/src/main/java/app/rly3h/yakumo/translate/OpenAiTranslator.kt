@@ -7,6 +7,7 @@ import app.rly3h.yakumo.data.OnlineProvider
 import app.rly3h.yakumo.data.Settings
 import app.rly3h.yakumo.ui.session.InputMode
 import app.rly3h.yakumo.ui.session.LanguagePair
+import app.rly3h.yakumo.ui.session.ONLINE_CHUNK_MS
 import app.rly3h.yakumo.ui.session.SAMPLE_RATE_16K
 import app.rly3h.yakumo.ui.session.SAMPLE_RATE_24K
 import app.rly3h.yakumo.ui.session.floresToLiveLang
@@ -19,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -51,7 +53,10 @@ internal class OpenAiTranslator(
 
   @Volatile private var webSocket: WebSocket? = null
   @Volatile private var failure: String? = null
+  // Completes true once `session.update` is sent, false on a failed open. Capture
+  // buffers audio until then so it never precedes the session config.
   private val opened = CompletableDeferred<Boolean>()
+  private val preConnect = PreConnectAudioBuffer(SAMPLE_RATE_24K * 2 * PRE_CONNECT_MS / 1000)
   private val finished = CompletableDeferred<Unit>()
 
   // Fixed direction for the session: target language is pinned, source auto-detected.
@@ -74,6 +79,9 @@ internal class OpenAiTranslator(
           cb.onFinished("No API key set. Add one in Settings → Online.")
           return@launch
         }
+        // Start the mic before minting/connecting so speech during "Connecting…" is
+        // buffered; teardown() stops it if the connect fails.
+        launch(Dispatchers.IO) { captureLoop(cb) }
         cb.onStatus("Connecting to OpenAI…")
         val ephemeral = OpenAiRealtime.mintEphemeral(key, floresToLiveLang(tgtFlores))
         if (!running.get()) { cb.onFinished(null); return@launch } // stopped while minting
@@ -89,10 +97,8 @@ internal class OpenAiTranslator(
           .build()
         webSocket = client.newWebSocket(request, listener(cb, sink))
 
-        // Audio capture + playback start once the socket is open.
         val idleGapMs = settings.onlineIdleGapMs.toLong()
         launch(Dispatchers.IO) { audio.playbackLoop() }
-        launch(Dispatchers.IO) { captureLoop(cb) }
         launch(Dispatchers.IO) { idleWatchdog(sink, idleGapMs) }
 
         finished.await()
@@ -175,26 +181,45 @@ internal class OpenAiTranslator(
 
   // --- Audio in (24 kHz PCM16) ---
 
-  private suspend fun captureLoop(cb: TranslatorCallbacks) {
-    if (!opened.await()) return // socket never opened
-    if (!running.get()) return
+  @OptIn(ExperimentalCoroutinesApi::class)
+  private fun captureLoop(cb: TranslatorCallbacks) {
     val native24k = supportsCaptureRate(SAMPLE_RATE_24K)
     val sampleRate = if (native24k) SAMPLE_RATE_24K else SAMPLE_RATE_16K
     try {
-      rawChunkCaptureLoop(running, sampleRate, MediaRecorder.AudioSource.VOICE_COMMUNICATION) { chunk ->
+      rawChunkCaptureLoop(
+        running,
+        sampleRate,
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        ONLINE_CHUNK_MS,
+      ) { chunk ->
+        // Buffer what is actually sent, i.e. after the fallback resample.
         val pcm24 = if (native24k) chunk else linearResample16to24(chunk)
-        val ws = webSocket ?: return@rawChunkCaptureLoop
-        // Drop audio rather than build an unbounded send queue on a stalled link.
-        if (ws.queueSize() > MAX_WS_QUEUE_BYTES) return@rawChunkCaptureLoop
-        val b64 = Base64.encodeToString(pcm24, Base64.NO_WRAP)
-        ws.send("""{"type":"session.input_audio_buffer.append","audio":"$b64"}""")
+        val ws = webSocket
+        val gate = if (opened.isCompleted) opened.getCompleted() else null
+        if (gate == false) return@rawChunkCaptureLoop // session is ending
+        // `webSocket` is assigned after newWebSocket() returns and can lag onOpen.
+        if (gate == null || ws == null) {
+          preConnect.offer(pcm24)
+          return@rawChunkCaptureLoop
+        }
+        preConnect.drain().forEach { sendAudio(ws, it) }
+        sendAudio(ws, pcm24)
       }
     } catch (e: Throwable) {
       if (running.get()) cb.onStatus("Mic error: ${e.message}")
     }
   }
 
+  private fun sendAudio(ws: WebSocket, pcm24: ByteArray) {
+    // Drop audio rather than build an unbounded send queue on a stalled link.
+    if (ws.queueSize() > MAX_WS_QUEUE_BYTES) return
+    val b64 = Base64.encodeToString(pcm24, Base64.NO_WRAP)
+    ws.send("""{"type":"session.input_audio_buffer.append","audio":"$b64"}""")
+  }
+
   private fun teardown() {
+    // Capture starts before the socket exists, so a failed connect must stop the mic.
+    running.set(false)
     audio.close()
     runCatching { webSocket?.cancel() }
     webSocket = null

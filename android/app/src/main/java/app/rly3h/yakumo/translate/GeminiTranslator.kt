@@ -8,6 +8,7 @@ import app.rly3h.yakumo.data.OnlineProvider
 import app.rly3h.yakumo.data.Settings
 import app.rly3h.yakumo.ui.session.InputMode
 import app.rly3h.yakumo.ui.session.LanguagePair
+import app.rly3h.yakumo.ui.session.ONLINE_CHUNK_MS
 import app.rly3h.yakumo.ui.session.SAMPLE_RATE_16K
 import app.rly3h.yakumo.ui.session.floresToLiveLang
 import app.rly3h.yakumo.ui.session.rawChunkCaptureLoop
@@ -17,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -53,9 +55,10 @@ internal class GeminiTranslator(
 
   @Volatile private var webSocket: WebSocket? = null
   @Volatile private var failure: String? = null
-  // Completes on `setupComplete` (true) or a failed open (false). Capture waits
-  // on it so audio isn't sent before the session is configured.
+  // Completes on `setupComplete` (true) or a failed open (false). Capture buffers
+  // audio until then so it isn't sent before the session is configured.
   private val ready = CompletableDeferred<Boolean>()
+  private val preConnect = PreConnectAudioBuffer(SAMPLE_RATE_16K * 2 * PRE_CONNECT_MS / 1000)
   private val finished = CompletableDeferred<Unit>()
 
   // Fixed direction for the session: target language is pinned, source auto-detected.
@@ -79,6 +82,9 @@ internal class GeminiTranslator(
           cb.onFinished("No API key set. Add a Gemini key in Settings → Online.")
           return@launch
         }
+        // Start the mic before connecting so speech during "Connecting…" is
+        // buffered; teardown() stops it if the connect fails.
+        launch(Dispatchers.IO) { captureLoop(cb) }
         cb.onStatus("Connecting to Gemini…")
 
         val client = OkHttpClient.Builder()
@@ -90,10 +96,8 @@ internal class GeminiTranslator(
           .build()
         webSocket = client.newWebSocket(request, listener(cb, sink))
 
-        // Playback can start immediately; capture gates on `setupComplete`.
         val idleGapMs = settings.onlineIdleGapMs.toLong()
         launch(Dispatchers.IO) { audio.playbackLoop() }
-        launch(Dispatchers.IO) { captureLoop(cb) }
         launch(Dispatchers.IO) { idleWatchdog(sink, idleGapMs) }
 
         finished.await()
@@ -195,23 +199,41 @@ internal class GeminiTranslator(
 
   // --- Audio in (16 kHz PCM16, the Live API's native input rate) ---
 
-  private suspend fun captureLoop(cb: TranslatorCallbacks) {
-    if (!ready.await()) return // session never came up
-    if (!running.get()) return
+  @OptIn(ExperimentalCoroutinesApi::class)
+  private fun captureLoop(cb: TranslatorCallbacks) {
     try {
-      rawChunkCaptureLoop(running, SAMPLE_RATE_16K, MediaRecorder.AudioSource.VOICE_COMMUNICATION) { chunk ->
-        val ws = webSocket ?: return@rawChunkCaptureLoop
-        // Drop audio rather than build an unbounded send queue on a stalled link.
-        if (ws.queueSize() > MAX_WS_QUEUE_BYTES) return@rawChunkCaptureLoop
-        val b64 = Base64.encodeToString(chunk, Base64.NO_WRAP)
-        ws.send("""{"realtimeInput":{"audio":{"data":"$b64","mimeType":"audio/pcm;rate=16000"}}}""")
+      rawChunkCaptureLoop(
+        running,
+        SAMPLE_RATE_16K,
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        ONLINE_CHUNK_MS,
+      ) { chunk ->
+        val ws = webSocket
+        val gate = if (ready.isCompleted) ready.getCompleted() else null
+        if (gate == false) return@rawChunkCaptureLoop // session is ending
+        // `webSocket` is assigned after newWebSocket() returns and can lag the events.
+        if (gate == null || ws == null) {
+          preConnect.offer(chunk)
+          return@rawChunkCaptureLoop
+        }
+        preConnect.drain().forEach { sendAudio(ws, it) }
+        sendAudio(ws, chunk)
       }
     } catch (e: Throwable) {
       if (running.get()) cb.onStatus("Mic error: ${e.message}")
     }
   }
 
+  private fun sendAudio(ws: WebSocket, chunk: ByteArray) {
+    // Drop audio rather than build an unbounded send queue on a stalled link.
+    if (ws.queueSize() > MAX_WS_QUEUE_BYTES) return
+    val b64 = Base64.encodeToString(chunk, Base64.NO_WRAP)
+    ws.send("""{"realtimeInput":{"audio":{"data":"$b64","mimeType":"audio/pcm;rate=16000"}}}""")
+  }
+
   private fun teardown() {
+    // Capture starts before the socket exists, so a failed connect must stop the mic.
+    running.set(false)
     audio.close()
     runCatching { webSocket?.cancel() }
     webSocket = null

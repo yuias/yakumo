@@ -13,7 +13,7 @@ internal fun isJapanese(text: String): Boolean =
  * A language the translation pair can be set to. The single source of truth for
  * everything language-specific; supporting one more language is one more row.
  *
- * @param flores FLORES-200 code passed to the translator
+ * @param flores FLORES-200 code; the MT core maps it to a language name
  * @param asrTag substring of the SenseVoice tag ("<|en|>" contains "en")
  * @param label  full name shown in the picker
  * @param short  two-letter badge shown on a turn card
@@ -93,7 +93,7 @@ private fun detectSide(pair: LanguagePair, asrTag: String, transcript: String): 
   if (asrTag.isNotBlank()) {
     listOf(pair.a, pair.b).firstOrNull { asrTag.contains(it.asrTag) }?.let { return it }
   }
-  // No usable tag (e.g. the English-only streaming recognizer): fall back to a
+  // No usable tag (the streaming recognizer reports no language): fall back to a
   // script check, which can only distinguish Japanese.
   val jp = listOf(pair.a, pair.b).firstOrNull { it.flores == "jpn_Jpan" }
   return if (jp != null && isJapanese(transcript)) jp else pair.a
@@ -114,11 +114,17 @@ internal fun floresToLiveLang(code: String): String = when (code) {
 }
 
 // --- Continuous capture ---
-// The offline paths capture 16 kHz mono; the online (OpenAI Realtime) path needs
-// 24 kHz. Both consume fixed ~100 ms PCM16 chunks; segmentation happens downstream
-// (Silero on the Rust side, sherpa's endpointer, or the Realtime model), not here.
+// The offline paths capture 16 kHz mono in 100 ms chunks; the online paths use
+// 40 ms chunks (OpenAI Realtime wants 24 kHz, Gemini Live 16 kHz). Segmentation
+// happens downstream (Silero on the Rust side, sherpa's endpointer, or the
+// online model), not here.
 internal const val SAMPLE_RATE_16K = 16000
 internal const val SAMPLE_RATE_24K = 24000
+
+// Offline chunks feed VAD/ASR, which gain nothing from smaller frames. Online chunks
+// are as small as is still cheap per WebSocket frame, to cut first-audio latency.
+internal const val OFFLINE_CHUNK_MS = 100
+internal const val ONLINE_CHUNK_MS = 40
 
 /**
  * User-tunable Silero VAD knobs (persisted in Settings). `threshold` is the
@@ -162,16 +168,6 @@ object OnlineBounds {
   val idleGapMs = 500f..3000f
 }
 
-private fun frameToLeBytes(frame: ShortArray, n: Int): ByteArray {
-  val b = ByteArray(n * 2)
-  for (i in 0 until n) {
-    val s = frame[i].toInt()
-    b[i * 2] = (s and 0xFF).toByte()
-    b[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
-  }
-  return b
-}
-
 /** True if AudioRecord can capture at [sampleRate] mono PCM16 on this device. */
 internal fun supportsCaptureRate(sampleRate: Int): Boolean {
   val n = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -204,9 +200,10 @@ internal fun linearResample16to24(src: ByteArray): ByteArray {
 }
 
 /**
- * Continuous capture emitting fixed ~100 ms PCM16 chunks until `running` goes
- * false. Used by the offline segmented path (chunks fed to Silero VAD), the
- * streaming recognizer (its own endpointer), and the online Realtime path.
+ * Continuous capture emitting fixed [chunkMs] PCM16 chunks until `running` goes
+ * false. Used by the offline segmented path (chunks fed to Silero VAD) and the
+ * streaming recognizer (its own endpointer), both at [OFFLINE_CHUNK_MS], and by
+ * the online Realtime path at [ONLINE_CHUNK_MS].
  * [audioSource] is VOICE_COMMUNICATION online (hardware AEC against the played
  * translation) and VOICE_RECOGNITION offline. Blocking — run on IO.
  */
@@ -214,6 +211,7 @@ internal fun rawChunkCaptureLoop(
   running: java.util.concurrent.atomic.AtomicBoolean,
   sampleRate: Int = SAMPLE_RATE_16K,
   audioSource: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION,
+  chunkMs: Int = OFFLINE_CHUNK_MS,
   emit: (ByteArray) -> Unit,
 ) {
   val minBuf = AudioRecord.getMinBufferSize(
@@ -228,12 +226,15 @@ internal fun rawChunkCaptureLoop(
     AudioFormat.ENCODING_PCM_16BIT,
     maxOf(minBuf, sampleRate * 2),
   )
-  val frame = ShortArray(sampleRate / 10) // ~100 ms
+  // PCM16 is little-endian on every Android ABI, so the byte read is the wire format.
+  val buf = ByteArray(sampleRate * chunkMs / 1000 * 2)
   try {
     record.startRecording()
     while (running.get()) {
-      val n = record.read(frame, 0, frame.size)
-      if (n > 0) emit(frameToLeBytes(frame, n))
+      val n = record.read(buf, 0, buf.size)
+      val len = n and 1.inv() // never emit half a sample
+      // Copy: consumers queue chunks while the next read reuses buf.
+      if (len > 0) emit(buf.copyOf(len))
     }
   } finally {
     record.stop()
