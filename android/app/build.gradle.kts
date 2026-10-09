@@ -56,8 +56,8 @@ android {
         applicationId = "app.rly3h.yakumo"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.5.0"
+        versionCode = 7
+        versionName = "0.6.0"
         buildConfigField("String", "GIT_HASH", "\"${gitHash()}\"")
 
         // Without this the JNA aar drags libjnidispatch.so in for every ABI it
