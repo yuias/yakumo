@@ -1,5 +1,6 @@
 package app.rly3h.yakumo.ui.session
 
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -233,12 +234,15 @@ internal fun linearResample16to24(src: ByteArray): ByteArray {
  * the online Realtime path at [ONLINE_CHUNK_MS].
  * [audioSource] is VOICE_COMMUNICATION online (hardware AEC against the played
  * translation) and VOICE_RECOGNITION offline. Blocking — run on IO.
+ * [preferredDevice] pins the input (Conversation mode uses the built-in mic so a
+ * Bluetooth headset doesn't take over capture); null keeps the system default.
  */
 internal fun rawChunkCaptureLoop(
   running: java.util.concurrent.atomic.AtomicBoolean,
   sampleRate: Int = SAMPLE_RATE_16K,
   audioSource: Int = MediaRecorder.AudioSource.VOICE_RECOGNITION,
   chunkMs: Int = OFFLINE_CHUNK_MS,
+  preferredDevice: AudioDeviceInfo? = null,
   emit: (ByteArray) -> Unit,
 ) {
   val minBuf = AudioRecord.getMinBufferSize(
@@ -256,6 +260,7 @@ internal fun rawChunkCaptureLoop(
   // PCM16 is little-endian on every Android ABI, so the byte read is the wire format.
   val buf = ByteArray(sampleRate * chunkMs / 1000 * 2)
   try {
+    preferredDevice?.let { record.setPreferredDevice(it) }
     record.startRecording()
     while (running.get()) {
       val n = record.read(buf, 0, buf.size)
