@@ -85,6 +85,7 @@ private fun SessionRow(session: SessionLog, onOpen: () -> Unit, onDelete: () -> 
         Text(formatTime(session.startedAt), style = MaterialTheme.typography.titleSmall)
         Text(
           "${session.utterances.size} turn${if (session.utterances.size == 1) "" else "s"}" +
+            (if (session.mode == "CONVERSATION") " · Conversation" else "") +
             if (preview.isNotBlank()) " · $preview" else "",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.outline,

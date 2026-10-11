@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import app.rly3h.yakumo.data.LoggedUtterance
 import app.rly3h.yakumo.data.SessionLog
 import app.rly3h.yakumo.data.SessionStore
+import app.rly3h.yakumo.translate.Speaker
+import app.rly3h.yakumo.ui.session.TurnCard
 import app.rly3h.yakumo.ui.session.labelForFlores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -56,10 +58,23 @@ fun HistoryDetailScreen(id: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun LoggedTurnCard(u: LoggedUtterance) {
+  // An unrecognised speaker string (a newer or hand-edited file) falls back to the Listen layout.
+  val speaker = Speaker.values().firstOrNull { it.name == u.speaker }
   Card(
     modifier = Modifier.fillMaxWidth(),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    colors = CardDefaults.cardColors(
+      containerColor = if (speaker == Speaker.ME) {
+        MaterialTheme.colorScheme.primaryContainer
+      } else {
+        MaterialTheme.colorScheme.surfaceVariant
+      },
+    ),
   ) {
+    if (speaker != null) {
+      // Same heading as the live view ("You · JA → FR").
+      TurnCard(u.transcript, u.srcLang, u.tgtLang, u.translation, speaker)
+      return@Card
+    }
     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
       Text(
         "${labelForFlores(u.srcLang)}  ${u.transcript}",
