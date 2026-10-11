@@ -48,7 +48,13 @@ internal class OpenAiTranslator(
   private val settings: Settings,
   private val pair: LanguagePair,
   private val inputMode: InputMode,
-) : SpeechTranslator {
+  // false: mic audio arrives through feed() from a capture owned by the caller.
+  private val ownCapture: Boolean = true,
+  // non-null: decoded 24 kHz PCM goes here instead of the engine's own RealtimeAudioSink.
+  private val audioOut: ((ByteArray) -> Unit)? = null,
+) : FeedableTranslator {
+  override val inputSampleRate: Int = SAMPLE_RATE_24K
+
   private val running = AtomicBoolean(false)
 
   @Volatile private var webSocket: WebSocket? = null
@@ -81,7 +87,7 @@ internal class OpenAiTranslator(
         }
         // Start the mic before minting/connecting so speech during "Connecting…" is
         // buffered; teardown() stops it if the connect fails.
-        launch(Dispatchers.IO) { captureLoop(cb) }
+        if (ownCapture) launch(Dispatchers.IO) { captureLoop(cb) }
         cb.onStatus("Connecting to OpenAI…")
         val ephemeral = OpenAiRealtime.mintEphemeral(key, floresToLiveLang(tgtFlores))
         if (!running.get()) { cb.onFinished(null); return@launch } // stopped while minting
@@ -98,7 +104,7 @@ internal class OpenAiTranslator(
         webSocket = client.newWebSocket(request, listener(cb, sink))
 
         val idleGapMs = settings.onlineIdleGapMs.toLong()
-        launch(Dispatchers.IO) { audio.playbackLoop() }
+        if (audioOut == null) launch(Dispatchers.IO) { audio.playbackLoop() }
         launch(Dispatchers.IO) { idleWatchdog(sink, idleGapMs) }
 
         finished.await()
@@ -162,8 +168,10 @@ internal class OpenAiTranslator(
         sink.sourceDelta(delta(obj))
       type.contains("output") && type.contains("transcript") && type.endsWith("delta") ->
         sink.targetDelta(delta(obj))
-      type.contains("output") && type.contains("audio") && type.endsWith("delta") ->
-        audio.enqueueBase64(delta(obj))
+      type.contains("output") && type.contains("audio") && type.endsWith("delta") -> {
+        val out = audioOut
+        if (out == null) audio.enqueueBase64(delta(obj)) else decodePcmBase64(delta(obj))?.let(out)
+      }
       type.contains("transcript") && type.endsWith("done") -> sink.finalize()
     }
   }
@@ -193,21 +201,26 @@ internal class OpenAiTranslator(
         ONLINE_CHUNK_MS,
       ) { chunk ->
         // Buffer what is actually sent, i.e. after the fallback resample.
-        val pcm24 = if (native24k) chunk else linearResample16to24(chunk)
-        val ws = webSocket
-        val gate = if (opened.isCompleted) opened.getCompleted() else null
-        if (gate == false) return@rawChunkCaptureLoop // session is ending
-        // `webSocket` is assigned after newWebSocket() returns and can lag onOpen.
-        if (gate == null || ws == null) {
-          preConnect.offer(pcm24)
-          return@rawChunkCaptureLoop
-        }
-        preConnect.drain().forEach { sendAudio(ws, it) }
-        sendAudio(ws, pcm24)
+        feed(if (native24k) chunk else linearResample16to24(chunk))
       }
     } catch (e: Throwable) {
       if (running.get()) cb.onStatus("Mic error: ${e.message}")
     }
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  override fun feed(chunk: ByteArray) {
+    if (!running.get()) return
+    val ws = webSocket
+    val gate = if (opened.isCompleted) opened.getCompleted() else null
+    if (gate == false) return // session is ending
+    // `webSocket` is assigned after newWebSocket() returns and can lag onOpen.
+    if (gate == null || ws == null) {
+      preConnect.offer(chunk)
+      return
+    }
+    preConnect.drain().forEach { sendAudio(ws, it) }
+    sendAudio(ws, chunk)
   }
 
   private fun sendAudio(ws: WebSocket, pcm24: ByteArray) {

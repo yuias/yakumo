@@ -51,7 +51,13 @@ internal class GeminiTranslator(
   private val settings: Settings,
   private val pair: LanguagePair,
   private val inputMode: InputMode,
-) : SpeechTranslator {
+  // false: mic audio arrives through feed() from a capture owned by the caller.
+  private val ownCapture: Boolean = true,
+  // non-null: decoded 24 kHz PCM goes here instead of the engine's own RealtimeAudioSink.
+  private val audioOut: ((ByteArray) -> Unit)? = null,
+) : FeedableTranslator {
+  override val inputSampleRate: Int = SAMPLE_RATE_16K
+
   private val running = AtomicBoolean(false)
 
   @Volatile private var webSocket: WebSocket? = null
@@ -85,7 +91,7 @@ internal class GeminiTranslator(
         }
         // Start the mic before connecting so speech during "Connecting…" is
         // buffered; teardown() stops it if the connect fails.
-        launch(Dispatchers.IO) { captureLoop(cb) }
+        if (ownCapture) launch(Dispatchers.IO) { captureLoop(cb) }
         cb.onStatus("Connecting to Gemini…")
 
         val client = OkHttpClient.Builder()
@@ -98,7 +104,7 @@ internal class GeminiTranslator(
         webSocket = client.newWebSocket(request, listener(cb, sink))
 
         val idleGapMs = settings.onlineIdleGapMs.toLong()
-        launch(Dispatchers.IO) { audio.playbackLoop() }
+        if (audioOut == null) launch(Dispatchers.IO) { audio.playbackLoop() }
         launch(Dispatchers.IO) { idleWatchdog(sink, idleGapMs) }
 
         finished.await()
@@ -180,7 +186,10 @@ internal class GeminiTranslator(
       runCatching { parts.jsonArray }.getOrNull()?.forEach { part ->
         val data = (part as? JsonObject)?.get("inlineData")?.jsonObject
           ?.get("data")?.jsonPrimitive?.contentOrNull
-        if (data != null) audio.enqueueBase64(data)
+        if (data != null) {
+          val out = audioOut
+          if (out == null) audio.enqueueBase64(data) else decodePcmBase64(data)?.let(out)
+        }
       }
     }
     if (content["turnComplete"]?.jsonPrimitive?.booleanOrNull == true) sink.finalize()
@@ -208,21 +217,25 @@ internal class GeminiTranslator(
         SAMPLE_RATE_16K,
         MediaRecorder.AudioSource.VOICE_COMMUNICATION,
         ONLINE_CHUNK_MS,
-      ) { chunk ->
-        val ws = webSocket
-        val gate = if (ready.isCompleted) ready.getCompleted() else null
-        if (gate == false) return@rawChunkCaptureLoop // session is ending
-        // `webSocket` is assigned after newWebSocket() returns and can lag the events.
-        if (gate == null || ws == null) {
-          preConnect.offer(chunk)
-          return@rawChunkCaptureLoop
-        }
-        preConnect.drain().forEach { sendAudio(ws, it) }
-        sendAudio(ws, chunk)
-      }
+      ) { chunk -> feed(chunk) }
     } catch (e: Throwable) {
       if (running.get()) cb.onStatus("Mic error: ${e.message}")
     }
+  }
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  override fun feed(chunk: ByteArray) {
+    if (!running.get()) return
+    val ws = webSocket
+    val gate = if (ready.isCompleted) ready.getCompleted() else null
+    if (gate == false) return // session is ending
+    // `webSocket` is assigned after newWebSocket() returns and can lag the events.
+    if (gate == null || ws == null) {
+      preConnect.offer(chunk)
+      return
+    }
+    preConnect.drain().forEach { sendAudio(ws, it) }
+    sendAudio(ws, chunk)
   }
 
   private fun sendAudio(ws: WebSocket, chunk: ByteArray) {
