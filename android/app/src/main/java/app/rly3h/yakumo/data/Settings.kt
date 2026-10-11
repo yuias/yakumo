@@ -3,6 +3,7 @@ package app.rly3h.yakumo.data
 import android.content.Context
 import app.rly3h.yakumo.ui.session.Conversation
 import app.rly3h.yakumo.ui.session.EndpointParams
+import app.rly3h.yakumo.ui.session.LanguageOption
 import app.rly3h.yakumo.ui.session.VadParams
 import app.rly3h.yakumo.ui.session.languageByFlores
 
@@ -25,6 +26,14 @@ internal fun requiredModelIds(mode: AsrMode, mt: MtModel): List<String> = when (
   AsrMode.SEGMENTED -> listOf("vad", "asr", mt.modelId)
   AsrMode.STREAMING -> listOf("asr_stream", mt.modelId)
 }
+
+/**
+ * Listen-mode partner from a stored FLORES code, or null (auto-detect). A pin equal
+ * to [mine] would collapse the pair, and a language the offline pipeline cannot
+ * handle must never reach it, so both fall back to auto.
+ */
+internal fun listenPartner(stored: String?, mine: LanguageOption): LanguageOption? =
+  stored?.let { languageByFlores(it) }?.takeIf { it != mine && it.offline }
 
 /** Lightweight user settings backed by SharedPreferences (no extra deps). */
 class Settings(context: Context) {
@@ -120,13 +129,12 @@ class Settings(context: Context) {
     set(v) = prefs.edit().apply { if (v == null) remove(KEY_PARTNER) else putString(KEY_PARTNER, v) }.apply()
 
   /**
-   * Current conversation view. A partner equal to the user's own language is
-   * treated as auto-detect, so a stale pin can't collapse the pair.
+   * Current conversation view. A partner equal to the user's own language, or one
+   * the offline pipeline can't handle, is treated as auto-detect (see [listenPartner]).
    */
   internal fun conversation(): Conversation {
     val mine = languageByFlores(myLangFlores)
-    val them = partnerFlores?.let { languageByFlores(it) }?.takeIf { it != mine }
-    return Conversation(mine, them)
+    return Conversation(mine, listenPartner(partnerFlores, mine))
   }
 
   // FLORES default keyed off the device language (Japanese device -> Japanese user).

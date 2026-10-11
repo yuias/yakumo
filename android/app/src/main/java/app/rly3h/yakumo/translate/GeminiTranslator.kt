@@ -10,6 +10,7 @@ import app.rly3h.yakumo.ui.session.InputMode
 import app.rly3h.yakumo.ui.session.LanguagePair
 import app.rly3h.yakumo.ui.session.ONLINE_CHUNK_MS
 import app.rly3h.yakumo.ui.session.SAMPLE_RATE_16K
+import app.rly3h.yakumo.ui.session.floresToGeminiLang
 import app.rly3h.yakumo.ui.session.floresToLiveLang
 import app.rly3h.yakumo.ui.session.rawChunkCaptureLoop
 import app.rly3h.yakumo.ui.session.resolveDirection
@@ -121,7 +122,7 @@ internal class GeminiTranslator(
 
   private fun listener(cb: TranslatorCallbacks, sink: RealtimeTurnAssembler) = object : WebSocketListener() {
     override fun onOpen(ws: WebSocket, response: Response) {
-      ws.send(GeminiLive.setupMessage(floresToLiveLang(tgtFlores)))
+      ws.send(GeminiLive.setupMessage(floresToGeminiLang(tgtFlores)))
     }
 
     // The Live API delivers its JSON responses as binary frames; OkHttp routes

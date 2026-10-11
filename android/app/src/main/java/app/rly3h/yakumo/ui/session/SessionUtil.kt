@@ -18,6 +18,7 @@ internal fun isJapanese(text: String): Boolean =
  * @param label  full name shown in the picker
  * @param short  two-letter badge shown on a turn card
  * @param locale OS TTS locale used to read the translation aloud
+ * @param offline usable by the on-device pipeline (ASR + MT); EN/JA only
  */
 internal data class LanguageOption(
   val flores: String,
@@ -25,14 +26,23 @@ internal data class LanguageOption(
   val label: String,
   val short: String,
   val locale: Locale,
+  val offline: Boolean,
 )
 
-// Currently EN<->JA only; both directions of every pair must be ASR-recognizable
-// (SenseVoice) and ideally TTS-speakable (OS). Add a row to widen the set.
+// The first two rows (EN, JA) are the only ones the offline pipeline can handle:
+// SenseVoice cannot recognize FR/DE/IT and the MT core only knows eng_Latn/jpn_Jpan.
+// The rest are online-only (Conversation mode). Order matters: the first row is the
+// languageByFlores fallback.
 internal val LANGUAGES: List<LanguageOption> = listOf(
-  LanguageOption("eng_Latn", "en", "English", "EN", Locale.ENGLISH),
-  LanguageOption("jpn_Jpan", "ja", "Japanese", "JA", Locale.JAPANESE),
+  LanguageOption("eng_Latn", "en", "English", "EN", Locale.ENGLISH, offline = true),
+  LanguageOption("jpn_Jpan", "ja", "Japanese", "JA", Locale.JAPANESE, offline = true),
+  LanguageOption("fra_Latn", "fr", "French", "FR", Locale.FRENCH, offline = false),
+  LanguageOption("deu_Latn", "de", "German", "DE", Locale.GERMAN, offline = false),
+  LanguageOption("ita_Latn", "it", "Italian", "IT", Locale.ITALIAN, offline = false),
+  LanguageOption("zho_Hans", "zh", "Chinese", "ZH", Locale.SIMPLIFIED_CHINESE, offline = false),
 )
+
+internal val OFFLINE_LANGUAGES: List<LanguageOption> = LANGUAGES.filter { it.offline }
 
 internal fun languageByFlores(flores: String): LanguageOption =
   LANGUAGES.firstOrNull { it.flores == flores } ?: LANGUAGES.first()
@@ -54,9 +64,17 @@ internal enum class InputMode { AUTO, FORCE_A, FORCE_B }
  */
 internal data class Conversation(val mine: LanguageOption, val partner: LanguageOption?)
 
-/** Languages the partner could be: every supported language except the user's own. */
+/** Listen-mode partners: the offline-capable languages except the user's own. */
 internal fun partnerOptions(mine: LanguageOption): List<LanguageOption> =
+  OFFLINE_LANGUAGES.filter { it != mine }
+
+/** Conversation-mode partners: every language except the user's own. */
+internal fun conversationPartnerOptions(mine: LanguageOption): List<LanguageOption> =
   LANGUAGES.filter { it != mine }
+
+/** Whether a Conversation session for this pair can run on-device. */
+internal fun conversationOfflineCapable(mine: LanguageOption, partner: LanguageOption): Boolean =
+  mine.offline && partner.offline && mine != partner
 
 /**
  * Collapse the my/partner view into the translator's [LanguagePair]. The partner
@@ -104,14 +122,23 @@ internal fun localeFromFlores(code: String): Locale = languageByFlores(code).loc
 
 internal fun labelForFlores(code: String): String = languageByFlores(code).short
 
-// FLORES code -> online translation-target language code. OpenAI Realtime and
-// Gemini Live both take the same short codes ("ja"/"en"). Maps the few languages
-// we support; unknown codes fall back to the English target.
+// FLORES code -> online translation-target language code (OpenAI Realtime; Gemini
+// uses floresToGeminiLang). Maps the languages we support; unknown codes fall back
+// to the English target.
 internal fun floresToLiveLang(code: String): String = when (code) {
   "jpn_Jpan" -> "ja"
   "eng_Latn" -> "en"
+  "fra_Latn" -> "fr"
+  "deu_Latn" -> "de"
+  "ita_Latn" -> "it"
+  "zho_Hans" -> "zh"
   else -> "en"
 }
+
+// Gemini Live Translate lists Simplified Chinese as "zh-Hans" (plain "zh" is not in
+// its supported-languages table); every other code matches floresToLiveLang.
+internal fun floresToGeminiLang(code: String): String =
+  if (code == "zho_Hans") "zh-Hans" else floresToLiveLang(code)
 
 // --- Continuous capture ---
 // The offline paths capture 16 kHz mono in 100 ms chunks; the online paths use

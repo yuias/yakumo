@@ -59,7 +59,7 @@ import app.rly3h.yakumo.translate.modelFile
 import app.rly3h.yakumo.translate.releaseUnusedEngines
 import app.rly3h.yakumo.translate.unloadEngineFor
 import app.rly3h.yakumo.ui.session.EndpointBounds
-import app.rly3h.yakumo.ui.session.LANGUAGES
+import app.rly3h.yakumo.ui.session.OFFLINE_LANGUAGES
 import app.rly3h.yakumo.ui.session.OnlineBounds
 import app.rly3h.yakumo.ui.session.VadBounds
 import kotlinx.coroutines.Dispatchers
@@ -240,7 +240,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
       color = MaterialTheme.colorScheme.outline,
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      LANGUAGES.forEach { opt ->
+      OFFLINE_LANGUAGES.forEach { opt ->
         FilterChip(
           selected = myLang == opt.flores,
           onClick = {
