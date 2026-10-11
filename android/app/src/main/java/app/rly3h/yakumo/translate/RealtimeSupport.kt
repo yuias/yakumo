@@ -115,6 +115,12 @@ internal class RealtimeTurnAssembler(
   }
 }
 
+/** Decodes a base64 audio delta; null for an empty or malformed payload so callers can drop it. */
+internal fun decodePcmBase64(b64: String): ByteArray? {
+  if (b64.isEmpty()) return null
+  return runCatching { Base64.decode(b64, Base64.NO_WRAP) }.getOrNull()
+}
+
 /**
  * Streams translated audio (24 kHz PCM16, the output rate for both engines) to an
  * [AudioTrack]. Deltas are decoded on the WebSocket thread and drained by a single
@@ -142,8 +148,7 @@ internal class RealtimeAudioSink(private val autoSpeak: () -> Boolean) {
   }
 
   fun enqueueBase64(b64: String) {
-    if (b64.isEmpty()) return
-    val pcm = runCatching { Base64.decode(b64, Base64.NO_WRAP) }.getOrNull() ?: return
+    val pcm = decodePcmBase64(b64) ?: return
     channel.trySend(pcm)
   }
 
