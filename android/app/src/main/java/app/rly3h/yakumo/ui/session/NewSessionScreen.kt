@@ -2,10 +2,12 @@ package app.rly3h.yakumo.ui.session
 
 import android.Manifest
 import android.os.Build
+import android.os.SystemClock
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.media.AudioManager
 import android.net.NetworkCapabilities
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
@@ -18,8 +20,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,6 +40,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,18 +51,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.rly3h.yakumo.R
 import app.rly3h.yakumo.data.OnlineProvider
+import app.rly3h.yakumo.data.SessionMode
 import app.rly3h.yakumo.data.Settings
+import app.rly3h.yakumo.translate.Speaker
 
 @Composable
 fun NewSessionScreen(modifier: Modifier = Modifier) {
@@ -100,6 +114,23 @@ fun NewSessionScreen(modifier: Modifier = Modifier) {
   // without persisting, so the saved preference survives a dead spot.
   LaunchedEffect(canGoOnline) { if (!canGoOnline) vm.forceOffline() }
 
+  val conversation = vm.mode == SessionMode.CONVERSATION
+  // The engine choice start() will make; decides which Conversation partners are usable.
+  val useOnline = vm.online && canGoOnline
+
+  // USAGE_VOICE_COMMUNICATION playback follows the call volume, so the hardware
+  // volume keys must adjust that stream while a Conversation session records.
+  val conversationActive = conversation && vm.recording
+  DisposableEffect(conversationActive) {
+    activity.volumeControlStream =
+      if (conversationActive) AudioManager.STREAM_VOICE_CALL else AudioManager.USE_DEFAULT_STREAM_TYPE
+    onDispose { activity.volumeControlStream = AudioManager.USE_DEFAULT_STREAM_TYPE }
+  }
+
+  // Lives here so a latched Speaking cannot carry over into the next session.
+  val latch = remember { PttLatch() }
+  LaunchedEffect(vm.recording) { if (!vm.recording) latch.reset() }
+
   // Keep the newest content in view as turns (and the live partial) stream in.
   LaunchedEffect(vm.turns.size, vm.partial) {
     val last = vm.turns.size - 1 + if (vm.partial.isNotBlank()) 1 else 0
@@ -115,6 +146,8 @@ fun NewSessionScreen(modifier: Modifier = Modifier) {
   }
 
   Column(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    ModeSelector(mode = vm.mode, enabled = !vm.recording, onChange = vm::onModeChange)
+
     // Top bar: the partner-language control (the only language you pick here) on
     // the left; new-session + engine toggles on the right. Your own language is
     // fixed in Settings and shown only as a quiet caption below.
@@ -123,12 +156,22 @@ fun NewSessionScreen(modifier: Modifier = Modifier) {
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      PartnerPicker(
-        mine = vm.mine,
-        partner = vm.partner,
-        enabled = !vm.recording,
-        onChange = vm::onPartnerChange,
-      )
+      if (conversation) {
+        ConversationPartnerPicker(
+          mine = vm.mine,
+          partner = vm.conversationPartner,
+          online = useOnline,
+          enabled = !vm.recording,
+          onChange = vm::onConversationPartnerChange,
+        )
+      } else {
+        PartnerPicker(
+          mine = vm.mine,
+          partner = vm.partner,
+          enabled = !vm.recording,
+          onChange = vm::onPartnerChange,
+        )
+      }
       Row(verticalAlignment = Alignment.CenterVertically) {
         // The session now outlives navigation, so starting a fresh one is an
         // explicit act rather than a side effect of leaving the screen.
@@ -175,6 +218,22 @@ fun NewSessionScreen(modifier: Modifier = Modifier) {
       }
     }
 
+    // Offline conversation only covers EN and JA; say so before the user hits Start.
+    if (conversation && !vm.recording && !useOnline) {
+      if (!conversationOfflineCapable(vm.mine, vm.conversationPartner)) {
+        Text(
+          "${vm.conversationPartner.label} needs Online mode.",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.error,
+        )
+      }
+      Text(
+        "Offline conversation works for English and Japanese only.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+
     // Conversation log: oldest at top, newest at the bottom (auto-scrolled). The
     // live partial transcript rides along as a trailing entry so it never
     // overlaps the controls below.
@@ -191,7 +250,7 @@ fun NewSessionScreen(modifier: Modifier = Modifier) {
           modifier = Modifier.fillMaxSize(),
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          items(vm.turns, key = { it.id }) { t -> TurnCard(t.transcript, t.srcLang, t.tgtLang, t.translation) }
+          items(vm.turns, key = { it.id }) { t -> TurnCard(t.transcript, t.srcLang, t.tgtLang, t.translation, t.speaker) }
           if (vm.partial.isNotBlank()) {
             item(key = "partial") { PartialTurn(vm.partial) }
           }
@@ -206,6 +265,14 @@ fun NewSessionScreen(modifier: Modifier = Modifier) {
       verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
       Text(vm.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+      if (conversationActive) {
+        SpeakingButton(
+          label = "Speaking (${vm.mine.short} → ${vm.conversationPartner.short})",
+          on = vm.speaking,
+          latch = latch,
+          onChange = vm::onSpeakingChange,
+        )
+      }
       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // Mirror the speak toggle's footprint on the left so the mic stays centered.
         Spacer(Modifier.size(48.dp))
@@ -265,6 +332,102 @@ private fun hasInternet(context: Context): Boolean {
   return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
+// Listen / Conversation. Conversation routes playback through the API 31
+// communication-device calls, so older devices cannot select it.
+@Composable
+private fun ModeSelector(mode: SessionMode, enabled: Boolean, onChange: (SessionMode) -> Unit) {
+  val conversationSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+  Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+      SegmentedButton(
+        selected = mode == SessionMode.LISTEN,
+        onClick = { onChange(SessionMode.LISTEN) },
+        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+        enabled = enabled,
+      ) { Text("Listen") }
+      SegmentedButton(
+        selected = mode == SessionMode.CONVERSATION,
+        onClick = { onChange(SessionMode.CONVERSATION) },
+        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+        enabled = enabled && conversationSupported,
+      ) { Text("Conversation") }
+    }
+    if (!conversationSupported) {
+      Text(
+        "Android 12 or later is needed",
+        modifier = Modifier.padding(top = 4.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+      )
+    }
+  }
+}
+
+// Conversation partner: always a concrete language (no auto-detect, the direction
+// comes from the Speaking button). Pairs the on-device engine cannot handle are
+// marked, and disabled while Offline is the engine that will run.
+@Composable
+private fun ConversationPartnerPicker(
+  mine: LanguageOption,
+  partner: LanguageOption,
+  online: Boolean,
+  enabled: Boolean,
+  onChange: (LanguageOption) -> Unit,
+) {
+  var open by remember { mutableStateOf(false) }
+  Box {
+    AssistChip(
+      onClick = { open = true },
+      enabled = enabled,
+      label = { Text("Partner: ${partner.label}") },
+      trailingIcon = {
+        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize))
+      },
+    )
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+      conversationPartnerOptions(mine).forEach { opt ->
+        val onlineOnly = !conversationOfflineCapable(mine, opt)
+        DropdownMenuItem(
+          text = { Text(if (onlineOnly) "${opt.label} (online only)" else opt.label) },
+          enabled = online || !onlineOnly,
+          onClick = { open = false; onChange(opt) },
+        )
+      }
+    }
+  }
+}
+
+// Push-to-talk. A pointer-level gesture rather than onClick because the latch needs
+// both the press and the release: a tap latches it, a long hold is momentary.
+@Composable
+private fun SpeakingButton(label: String, on: Boolean, latch: PttLatch, onChange: (Boolean) -> Unit) {
+  val currentOnChange by rememberUpdatedState(onChange)
+  Surface(
+    shape = MaterialTheme.shapes.large,
+    color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+    contentColor = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(64.dp)
+      .semantics { role = Role.Button }
+      .pointerInput(latch) {
+        detectTapGestures(
+          onPress = {
+            latch.press(SystemClock.uptimeMillis())
+            currentOnChange(latch.on)
+            tryAwaitRelease() // false on cancel; treated as a release either way
+            latch.release(SystemClock.uptimeMillis())
+            currentOnChange(latch.on)
+          },
+        )
+      },
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      Text(label, style = MaterialTheme.typography.titleMedium)
+    }
+  }
+}
+
 // The partner's language: "Auto" (detect it) or pinned to a specific language.
 // The only language control on this screen — the user's own side is set in Settings.
 @Composable
@@ -297,13 +460,24 @@ private fun PartnerPicker(
 // A finished (or in-flight) turn. No card background — turns are separated by the
 // list spacing and the src→tgt header alone, per the flat look we want.
 @Composable
-internal fun TurnCard(transcript: String, srcLang: String, tgtLang: String, translation: String?) {
+internal fun TurnCard(
+  transcript: String,
+  srcLang: String,
+  tgtLang: String,
+  translation: String?,
+  speaker: Speaker? = null,
+) {
   Column(
     Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
     verticalArrangement = Arrangement.spacedBy(4.dp),
   ) {
+    val direction = "${labelForFlores(srcLang)} → ${labelForFlores(tgtLang)}"
     Text(
-      "${labelForFlores(srcLang)} → ${labelForFlores(tgtLang)}",
+      when (speaker) {
+        null -> direction
+        Speaker.ME -> "You · $direction"
+        Speaker.PARTNER -> "Partner · $direction"
+      },
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.primary,
     )
