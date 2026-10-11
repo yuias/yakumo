@@ -20,7 +20,7 @@ interface EchoGate {
 private const val SEGMENT_IDLE_MS = 250L
 
 /** Reverb allowance after the last speaker sample, so the mic does not hear the tail as speech. */
-private const val ECHO_TAIL_MS = 300L
+internal const val ECHO_TAIL_MS = 300L
 
 /** Extra time granted to the drain wait on top of the audio's own duration. */
 private const val DRAIN_SLACK_MS = 500L
