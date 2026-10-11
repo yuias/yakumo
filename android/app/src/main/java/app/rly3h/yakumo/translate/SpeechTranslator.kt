@@ -2,6 +2,9 @@ package app.rly3h.yakumo.translate
 
 import kotlinx.coroutines.CoroutineScope
 
+/** Who spoke a turn in Conversation mode; null in Listen mode. */
+enum class Speaker { ME, PARTNER }
+
 /**
  * One conversation turn as shown in the session UI: the recognized source text
  * and (once ready) its translation. `translation == null` means "still in
@@ -10,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
  *
  * @param srcLang/tgtLang FLORES-200 codes (the UI maps them to badges/locales)
  * @param detected the raw ASR language tag, empty when the engine doesn't report one
+ * @param speaker who spoke the turn in Conversation mode; null keeps Listen rows unchanged
  */
 data class LiveTurn(
   val id: Long,
@@ -18,6 +22,7 @@ data class LiveTurn(
   val tgtLang: String,
   val detected: String,
   val translation: String? = null,
+  val speaker: Speaker? = null,
 )
 
 /**
@@ -56,4 +61,19 @@ interface TranslatorCallbacks {
 interface SpeechTranslator {
   fun start(scope: CoroutineScope, callbacks: TranslatorCallbacks)
   fun stop()
+}
+
+/** Conversation-mode engine: direction is set explicitly by the Speaking control. */
+internal interface ConversationTranslator : SpeechTranslator {
+  /** true = the user is speaking (mine -> partner). Safe to call from the main thread at any time. */
+  fun setSpeaking(speaking: Boolean)
+}
+
+/** An online engine that can take mic audio from a shared capture instead of its own AudioRecord. */
+internal interface FeedableTranslator : SpeechTranslator {
+  /** Sample rate [feed] expects (OpenAI 24000, Gemini 16000). */
+  val inputSampleRate: Int
+
+  /** PCM16 LE mono at [inputSampleRate]; buffered until the session is ready, like the own capture. */
+  fun feed(chunk: ByteArray)
 }

@@ -14,6 +14,7 @@ data class LoggedUtterance(
   val tgtLang: String,
   val detected: String = "",
   val translation: String = "",
+  val speaker: String? = null, // "ME" | "PARTNER" in Conversation mode; null for Listen / older files
 )
 
 /** A saved session: a time-ordered list of turns. */
@@ -22,6 +23,7 @@ data class SessionLog(
   val id: String,
   val startedAt: Long,
   val utterances: List<LoggedUtterance> = emptyList(),
+  val mode: String = "LISTEN", // "LISTEN" | "CONVERSATION"; older files predate the field
 )
 
 /**

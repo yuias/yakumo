@@ -5,6 +5,7 @@ import app.rly3h.yakumo.ui.session.Conversation
 import app.rly3h.yakumo.ui.session.EndpointParams
 import app.rly3h.yakumo.ui.session.LanguageOption
 import app.rly3h.yakumo.ui.session.VadParams
+import app.rly3h.yakumo.ui.session.conversationPartnerOptions
 import app.rly3h.yakumo.ui.session.languageByFlores
 
 /** The online speech-translation backend the user picks for Online mode. */
@@ -34,6 +35,23 @@ internal fun requiredModelIds(mode: AsrMode, mt: MtModel): List<String> = when (
  */
 internal fun listenPartner(stored: String?, mine: LanguageOption): LanguageOption? =
   stored?.let { languageByFlores(it) }?.takeIf { it != mine && it.offline }
+
+/** New Session screen mode: one-way Listen or two-way push-to-talk Conversation. */
+enum class SessionMode { LISTEN, CONVERSATION }
+
+/** Stored mode name, or LISTEN when absent or unrecognized. */
+internal fun parseSessionMode(stored: String?): SessionMode =
+  SessionMode.entries.firstOrNull { it.name == stored } ?: SessionMode.LISTEN
+
+/**
+ * Stored code if it names a language other than [mine]; else the first conversation
+ * option (EN, or JA when mine is EN). Deliberately not [languageByFlores], whose EN
+ * fallback would collide with [mine] when the user's language is English.
+ */
+internal fun resolveConversationPartner(stored: String?, mine: LanguageOption): LanguageOption {
+  val options = conversationPartnerOptions(mine)
+  return options.firstOrNull { it.flores == stored } ?: options.first()
+}
 
 /** Lightweight user settings backed by SharedPreferences (no extra deps). */
 class Settings(context: Context) {
@@ -137,6 +155,19 @@ class Settings(context: Context) {
     return Conversation(mine, listenPartner(partnerFlores, mine))
   }
 
+  /** Listen vs Conversation; Listen by default and for any unrecognized stored value. */
+  var sessionMode: SessionMode
+    get() = parseSessionMode(prefs.getString(KEY_SESSION_MODE, null))
+    set(v) = prefs.edit().putString(KEY_SESSION_MODE, v.name).apply()
+
+  /** Conversation-mode partner; kept apart from Listen's nullable [partnerFlores] (no auto-detect here). */
+  var conversationPartnerFlores: String?
+    get() = prefs.getString(KEY_CONVERSATION_PARTNER, null)
+    set(v) = prefs.edit().apply { if (v == null) remove(KEY_CONVERSATION_PARTNER) else putString(KEY_CONVERSATION_PARTNER, v) }.apply()
+
+  internal fun conversationPartner(mine: LanguageOption): LanguageOption =
+    resolveConversationPartner(conversationPartnerFlores, mine)
+
   // FLORES default keyed off the device language (Japanese device -> Japanese user).
   private val defaultMyLangFlores: String =
     if (java.util.Locale.getDefault().language == "ja") "jpn_Jpan" else "eng_Latn"
@@ -215,6 +246,8 @@ class Settings(context: Context) {
     const val KEY_GEMINI_KEY_CIPHER = "geminiApiKeyCipher"
     const val KEY_MY_LANG = "myLangFlores"
     const val KEY_PARTNER = "partnerFlores"
+    const val KEY_SESSION_MODE = "sessionMode"
+    const val KEY_CONVERSATION_PARTNER = "conversationPartnerFlores"
     // Silero-era keys (distinct from the old RMS knobs so stale values don't leak).
     const val KEY_VAD_THRESH = "vadProbThreshold"
     const val KEY_VAD_SILENCE = "vadMinSilenceMs"
