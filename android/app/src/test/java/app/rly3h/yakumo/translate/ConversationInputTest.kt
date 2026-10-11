@@ -21,6 +21,16 @@ class ConversationInputTest {
   }
 
   @Test
+  fun switchTailIsDerivedFromTheTargetRate() {
+    // 16-bit mono: 800 ms is 25600 bytes at 16 kHz and 38400 at 24 kHz, in whole 40 ms chunks.
+    assertEquals(25_600, switchTailBytes(16_000))
+    assertEquals(38_400, switchTailBytes(24_000))
+    assertEquals(1_280, onlineChunkBytes(16_000))
+    assertEquals(1_920, onlineChunkBytes(24_000))
+    assertEquals(0, switchTailBytes(24_000) % onlineChunkBytes(24_000))
+  }
+
+  @Test
   fun directionFollowsSpeaker() {
     assertEquals(ja to fr, conversationDirection(Speaker.ME, ja, fr))
     assertEquals(fr to ja, conversationDirection(Speaker.PARTNER, ja, fr))

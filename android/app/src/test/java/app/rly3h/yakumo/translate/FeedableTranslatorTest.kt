@@ -13,4 +13,9 @@ class FeedableTranslatorTest {
   fun geminiTranslatorAcceptsExternalAudio() {
     assertTrue(FeedableTranslator::class.java.isAssignableFrom(GeminiTranslator::class.java))
   }
+
+  @Test
+  fun onlineConversationTranslatorIsAConversationTranslator() {
+    assertTrue(ConversationTranslator::class.java.isAssignableFrom(OnlineConversationTranslator::class.java))
+  }
 }
