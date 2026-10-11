@@ -1,30 +1,48 @@
 package app.rly3h.yakumo.ui.session
 
 import android.app.Application
+import android.os.Build
 import android.speech.tts.TextToSpeech
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.rly3h.yakumo.audio.AudioRouters
 import app.rly3h.yakumo.data.AsrMode
 import app.rly3h.yakumo.data.LoggedUtterance
 import app.rly3h.yakumo.data.Models
 import app.rly3h.yakumo.data.OnlineProvider
 import app.rly3h.yakumo.data.SessionLog
+import app.rly3h.yakumo.data.SessionMode
 import app.rly3h.yakumo.data.SessionStore
 import app.rly3h.yakumo.RecordingService
 import app.rly3h.yakumo.data.Settings
+import app.rly3h.yakumo.translate.ConversationTranslator
 import app.rly3h.yakumo.translate.GeminiTranslator
 import app.rly3h.yakumo.translate.LiveTurn
+import app.rly3h.yakumo.translate.OfflineConversationTranslator
 import app.rly3h.yakumo.translate.OfflineTranslator
+import app.rly3h.yakumo.translate.OnlineConversationTranslator
 import app.rly3h.yakumo.translate.OpenAiTranslator
 import app.rly3h.yakumo.translate.SpeechTranslator
 import app.rly3h.yakumo.translate.TranslatorCallbacks
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import uniffi.translatecore.mtSupported
 
 private const val IDLE_STATUS = "Tap the mic and speak (EN or JA)."
+private const val CONVERSATION_IDLE_STATUS = "Tap the mic, then use Speaking to choose who talks."
+
+// A Conversation mode saved on a newer device (or restored from a backup) must not
+// leave an API < 31 device on a mode it cannot start.
+private fun availableMode(stored: SessionMode) =
+  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) SessionMode.LISTEN else stored
+
+private fun idleStatusFor(mode: SessionMode) =
+  if (mode == SessionMode.CONVERSATION) CONVERSATION_IDLE_STATUS else IDLE_STATUS
 
 /**
  * Owns a live session: its turns, the running engine, and the TTS handle.
@@ -43,7 +61,7 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
   private var sessionId = SessionStore.newId(startedAt)
 
   val turns = mutableStateListOf<LiveTurn>() // chronological: newest last
-  var status by mutableStateOf(IDLE_STATUS)
+  var status by mutableStateOf(idleStatusFor(availableMode(settings.sessionMode)))
     private set
   var partial by mutableStateOf("") // live transcript (streaming mode)
     private set
@@ -63,6 +81,14 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
   var partner by mutableStateOf(settings.conversation().partner)
     private set
 
+  // Conversation mode: its own partner (never auto) and the Speaking direction control.
+  var mode by mutableStateOf(availableMode(settings.sessionMode))
+    private set
+  var conversationPartner by mutableStateOf(settings.conversationPartner(mine))
+    private set
+  var speaking by mutableStateOf(false)
+    private set
+
   private var tts: TextToSpeech? = null
   private var translator: SpeechTranslator? = null
 
@@ -76,6 +102,29 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
     val conversation = settings.conversation()
     mine = conversation.mine
     partner = conversation.partner
+    conversationPartner = settings.conversationPartner(mine)
+  }
+
+  /**
+   * Ignored mid-session. Turns of the other mode are cleared first so one saved log
+   * never mixes Listen and Conversation (which also keeps [mode] valid for [persist]).
+   */
+  fun onModeChange(value: SessionMode) {
+    if (recording || value == mode) return
+    if (turns.isNotEmpty()) reset()
+    mode = value
+    settings.sessionMode = value
+    status = idleStatusFor(value)
+  }
+
+  fun onConversationPartnerChange(value: LanguageOption) {
+    conversationPartner = value
+    settings.conversationPartnerFlores = value.flores
+  }
+
+  fun onSpeakingChange(value: Boolean) {
+    speaking = value
+    (translator as? ConversationTranslator)?.setSpeaking(value)
   }
 
   fun onPartnerChange(value: LanguageOption?) {
@@ -108,7 +157,7 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
     partial = ""
     startedAt = System.currentTimeMillis()
     sessionId = SessionStore.newId(startedAt)
-    status = IDLE_STATUS
+    status = idleStatusFor(mode)
   }
 
   /**
@@ -118,6 +167,12 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
    */
   fun start(canGoOnline: Boolean) {
     if (recording) return
+    if (mode == SessionMode.CONVERSATION) {
+      // Conversation routing needs the API 31 communication-device calls.
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) startConversation(canGoOnline)
+      else status = "Conversation needs Android 12 or later."
+      return
+    }
     val app = getApplication<Application>()
     val useOnline = online && canGoOnline
     val asrMode = settings.asrMode
@@ -155,6 +210,76 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
     engine.start(viewModelScope, callbacks)
   }
 
+  /**
+   * Conversation counterpart of the Listen branch of [start]. Kept separate so the
+   * Listen path stays exactly as it was.
+   */
+  @RequiresApi(Build.VERSION_CODES.S)
+  private fun startConversation(canGoOnline: Boolean) {
+    val app = getApplication<Application>()
+    val partner = conversationPartner
+    val useOnline = online && canGoOnline
+    val asrMode = settings.asrMode
+    val mtModel = settings.mtModel
+    if (!useOnline) {
+      // The on-device pipeline only knows EN and JA; other languages must never reach it.
+      if (!conversationOfflineCapable(mine, partner)) {
+        status = "${partner.label} needs Online mode."
+        return
+      }
+      if (!mtSupported()) {
+        status = "Offline translation isn't supported on this device's CPU. Use Online mode."
+        return
+      }
+      if (settings.requiredModelIds().any { !Models.isPresent(app, it) }) {
+        status = "Models missing — download them in Settings → Models."
+        return
+      }
+    }
+    // Create the router before the service starts: the service records the router
+    // generation in onStartCommand to scope its onDestroy safety net to this session.
+    val router = AudioRouters.create(app)
+    val engine: ConversationTranslator = if (useOnline) {
+      OnlineConversationTranslator(app, settings, settings.onlineProvider, mine, partner, router)
+    } else {
+      OfflineConversationTranslator(app, settings, mine, partner, asrMode, mtModel, router)
+    }
+    translator = engine
+    speaking = false // every session starts on the partner's side; Speaking is pressed to talk
+    recording = true
+    RecordingService.onStopRequested = ::stop
+    RecordingService.start(app)
+    status = when {
+      useOnline -> "Connecting…"
+      asrMode == AsrMode.STREAMING -> "Listening (streaming)…"
+      else -> "Listening… use Speaking to talk."
+    }
+    engine.start(viewModelScope, conversationCallbacks(engine))
+  }
+
+  /**
+   * Conversation engines report status and completion from Dispatchers.IO. Those two
+   * touch plain (non-snapshot) fields and the service, so they hop to the main thread
+   * and are dropped if the engine is no longer current. Turn and partial updates only
+   * write snapshot state and pass straight through.
+   */
+  private fun conversationCallbacks(engine: ConversationTranslator) =
+    object : TranslatorCallbacks by callbacks {
+      override fun onStatus(text: String) {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+          if (translator === engine) status = text
+        }
+      }
+
+      override fun onFinished(error: String?) {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+          if (translator !== engine) return@launch
+          speaking = false
+          callbacks.onFinished(error)
+        }
+      }
+    }
+
   fun stop() {
     if (!recording) return
     translator?.stop()
@@ -183,8 +308,12 @@ internal class NewSessionViewModel(app: Application) : AndroidViewModel(app) {
         id = sessionId,
         startedAt = startedAt,
         utterances = done.map {
-          LoggedUtterance(it.transcript, it.srcLang, it.tgtLang, it.detected, it.translation!!)
+          LoggedUtterance(
+            it.transcript, it.srcLang, it.tgtLang, it.detected, it.translation!!,
+            speaker = it.speaker?.name,
+          )
         },
+        mode = mode.name,
       ),
     )
   }
