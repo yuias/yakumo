@@ -37,10 +37,17 @@ UI(`ui/session/NewSessionScreen.kt`)はトグルで実装を選ぶだけで、�
 | `OfflineTranslator` | `translate/OfflineTranslator.kt` | Silero VAD v6 → SenseVoice ASR(または Nemotron 3.5 streaming) → llama.cpp 翻訳(GGUF) → OS TTS |
 | `OpenAiTranslator` | `translate/OpenAiTranslator.kt` + `OpenAiRealtime.kt` | OpenAI Realtime translations(S2S) |
 | `GeminiTranslator` | `translate/GeminiTranslator.kt` + `GeminiLive.kt` | Gemini Live Translate(S2S) |
+| `OfflineConversationTranslator` | `translate/OfflineConversationTranslator.kt` | Conversation 用。`OfflineTranslator` を Speaking の状態で方向を決めるフック付きで動かし、`TtsPlayback` で読み上げる |
+| `OnlineConversationTranslator` | `translate/OnlineConversationTranslator.kt` | Conversation 用。`OpenAiTranslator` / `GeminiTranslator` を方向ごとに 1 本、計 2 本を 1 つのマイクで動かし、`PcmPlayback` で再生する |
 
 `RealtimeSupport.kt` に両オンライン実装の共通部品を置く:
 `RealtimeTurnAssembler`(原文 / 訳文の delta を 1 行に組み立てる)と
 `RealtimeAudioSink`(24kHz PCM16 を `AudioTrack` で再生)。
+Conversation では訳音声を `RealtimeAudioSink` ではなく `audio/PcmPlayback` に渡す(`audioOut` で差し替える)。
+
+セッションには 2 つのモードがある(§5)。**Listen**(既定)は上の 3 実装を従来どおり使う。
+**Conversation** は `ConversationTranslator`(`setSpeaking` を持つ `SpeechTranslator`)として
+`OfflineConversationTranslator` / `OnlineConversationTranslator` を選び、音声の出力先を `audio/` が切り替える(§5a)。
 
 ---
 
@@ -134,6 +141,8 @@ recognizer / detector / 翻訳モデルは Rust 側のプロセスグローバ�
 OS の TTS エンジンに寄せている(`Locale` 指定 + `setSpeechRate`)。
 日本語の漢字 g2p を OS 側が処理してくれるのが決め手で、オンデバイス TTS モデルは同梱しない。
 Android 11+ のパッケージ可視性のため、`AndroidManifest.xml` に `<queries>` の `TTS_SERVICE` が要る。
+Conversation のオフラインは Listen の `TextToSpeech` を共有せず、`TtsPlayback` が専用のインスタンスを持つ(§5a)。
+出力先用の属性が Listen 側に漏れないようにするため。
 
 ---
 
@@ -151,7 +160,7 @@ Settings → Online translation でプロバイダとキーを設定し、マイ
 | ターン確定 | プロバイダの end-of-turn シグナル | 訳文の文末句読点 |
 | 共通の保険 | 無音 `onlineIdleGapMs`(既定 1200ms)で強制的にターンを閉じる | 同左 |
 
-キャプチャは `VOICE_COMMUNICATION`(HW AEC で訳音声の回り込みを軽減)。
+キャプチャは `VOICE_COMMUNICATION`(HW AEC で訳音声の回り込みを軽減)。Conversation では 2 セッションが 1 本のキャプチャを共有する(§5)。
 音声は **40 ms チャンク**で送る(オフラインは 100 ms)。`AudioRecord` から `ByteArray` へ直接読む。
 
 **接続前の音声バッファ**: キャプチャは接続(OpenAI はトークン発行 + WebSocket、Gemini は WebSocket + setup)の**前に**始める。
@@ -162,19 +171,147 @@ Settings → Online translation でプロバイダとキーを設定し、マイ
 キーはプロバイダごとに別スロットで、**Tink AEAD + Android Keystore マスターキー**で暗号化して
 SharedPreferences に base64 で置く(平文は prefs に触れない)。
 
-**MVP 制約**: 片方向。target 言語は固定し、source は自動検出に任せる。
+**Listen の制約**: 1 つのセッションは片方向。target 言語は固定し、source は自動検出に任せる。
+双方向の対面会話は、この単方向セッションを方向ごとに 2 本並べる Conversation モードで扱う(§5a)。
 
 ---
 
 ## 5. 会話モデルと方向判定
 
-`LanguageOption`(FLORES コード + ASR タグ + `Locale`)の一覧が対応言語で、現状は EN / JA の 2 行。
-UI は「自分の言語(Settings で固定)」と「相手の言語(セッションごと、null = 自動判定)」という
+`LanguageOption`(FLORES コード + ASR タグ + `Locale` + オフライン可否)の一覧が対応言語で、EN / JA / FR / DE / IT / ZH(簡体字)の 6 行。
+先頭の EN / JA だけが `offline = true` で、FR / DE / IT / ZH はオンライン専用
+(SenseVoice が FR/DE/IT を認識できず、翻訳コアも `eng_Latn` / `jpn_Jpan` しか持たないため)。
+UI は「自分の言語(Settings で固定、EN / JA)」と「相手の言語(セッションごと)」という
 `Conversation` の形で持ち、翻訳エンジンの境界で `LanguagePair` + `InputMode` に畳む。
+
+### セッションモード
+
+| | Listen(既定) | Conversation |
+|---|---|---|
+| 相手の言語 | Auto(null)または特定の言語。選べるのはオフライン可の言語 | 必ず具体的な言語(Auto 無し)。オフライン中はオンライン専用の言語を選べない |
+| 方向の決め方 | 発話ごとの自動判定(下記) | Speaking ボタンの状態(自動判定しない) |
+| 出力 | メディア音量(OS TTS / `AudioTrack`) | 聞く人に応じてイヤホン / スピーカー(§5a) |
+| API レベル | 制限なし | **API 31 以上のみ** |
+
+保存済みの Conversation モードを API 31 未満の端末が読んだ場合は Listen に戻す(開始できないモードに留めない)。
+
+### Listen の方向判定
 
 方向は SenseVoice の言語タグを最優先し、タグが無い/不明なら文字種のヒューリスティックに落とす。
 Nemotron 3.5(Streaming)は多言語だが言語タグを返さないので、常にこのヒューリスティックで方向を決める
 (日本語の文字を含めば日本語側、含まなければもう一方の側と判定する)。
+文字種で区別できるのは日本語だけなので、Listen の相手言語はオフライン可の言語(EN / JA)に限る。
+
+### Conversation の方向
+
+話者は `Speaker`(`ME` / `PARTNER`)で表す。
+**Speaking がオフ**のあいだはマイクを相手の発話(`PARTNER`: 相手 → 自分の言語)、
+**オン**のあいだは自分の発話(`ME`: 自分 → 相手の言語)として扱う。セッションは常にオフで始まる。
+
+- **Speaking ボタン**は `PttLatch` で、**タップするとラッチ**(もう一度タップするまでオン)、**長押しの間だけ**オン(離すとオフ)。
+  オフ状態から 400ms 以上押し続けると長押し(離すとオフ)、それより短ければタップ(ラッチ)とみなす。
+  ラッチ中のタップは離した時点でオフになる。録音が止まるとラッチは解除される。
+- 翻訳の聞き手は話者の反対側。`ME` の訳は `Audience.PARTNER`(相手が聞く)、`PARTNER` の訳は `Audience.ME`(自分が聞く)。
+- 方向の判定は `ConversationInputGate`(キャプチャスレッド専用)が一元化している。切り替えの最初のチャンクには
+  「直前の話者」が付く。これを使って、オフラインの Segmented は直前の方向の VAD を flush してから次へ進み
+  (Streaming は確定テキストを直前の方向で確定してから認識状態をリセットする)、オンラインは直前の方向のセッションへ無音(`SWITCH_TAIL_MS` = 800ms)を足して、プロバイダに開いたターンを閉じさせる。
+- ターンの `id` は話者ごとに別番号なので、`directionalTurnId` で `ME` を奇数、`PARTNER` を偶数にしてリストのキーを一意にする。
+  ターンには `speaker` が付き、セッションの履歴にも `speaker` と `mode` を保存する。
+  `speaker` が無い(旧版 / Listen)ターンの表示は従来どおり。
+
+### オンラインの 2 セッション
+
+オンラインの Conversation は、同じプロバイダのリアルタイムセッションを方向ごとに 1 本、**計 2 本を同時に**開く
+(`OnlineConversationTranslator`)。相手 → 自分のセッションは `FORCE_A`、自分 → 相手のセッションは `FORCE_B` で方向を固定する。
+Speaking を押した時点で接続を待たないよう、**2 本とも開始時に接続**する。したがって**課金も 2 本分になり得る**。
+
+- マイクは 1 本の `AudioRecord`(`VOICE_COMMUNICATION`)を共有し、各チャンクを Speaking が選ぶ側のセッションにだけ送る。
+  待機側のセッションには何も送らない。
+- 接続前の音声は各セッションの `PreConnectAudioBuffer` に溜まる(§4)。
+- どちらかのセッションが終了または失敗したら、最初のエラーを残してセッション全体を止める。
+  停止時は内側のセッションが終わるのを最大 5 秒待ってから、ルーターを解放する。
+- ステータスは「`Partner→JA: …` · `You→FR: …`」のように両方向の状態を 1 行にまとめる。
+- 言語コードは OpenAI が `zh`、Gemini が **`zh-Hans`**(Gemini の対応言語表に素の `zh` は無い。`floresToGeminiLang`)。
+  他の言語は両者で同じ。
+
+### オフラインの Conversation
+
+オフラインは `OfflineTranslator` に `OfflineConversationHooks` を渡して動かす。方向は Speaking の状態から
+`conversationDirection` が決めるので、自動判定は使わない(Segmented / Streaming のどちらでも同じ)。
+VAD が切ったセグメント / Streaming の確定テキストには、キャプチャ時の方向を付けて下流に流す。
+Streaming は方向の切り替え時にそこまでの確定テキストを直前の方向で出し、`asrStreamReset` で認識状態をリセットする。
+SenseVoice / Nemotron の言語対応とモデルの都合で、オフラインの Conversation は **EN ↔ JA のみ**。
+FR/DE/IT/ZH を選んだ状態でオフライン開始しようとすると、開始を断ってオンラインを案内する。
+
+---
+
+## 5a. 音声の出力先ルーティング(Conversation)
+
+Conversation では、自分が聞く訳(相手の発話の訳)と相手が聞く訳(自分の発話の訳)を別の出力に出したい。
+自分向けは**イヤホン**、相手向けは**本体スピーカー**。Listen は従来どおり(音声モードは `MODE_NORMAL` のまま)。
+
+### `audio/` パッケージ
+
+| ファイル | 役割 |
+|---|---|
+| `AudioRouter.kt` | `AudioRouter` interface(`begin` / `routeTo` / `playbackAttributes` / `builtinMic` / `end`)、`Audience` / `ResolvedOutput`、ルーターの登録簿 `AudioRouters` |
+| `CommunicationDeviceRouter.kt` | API 31 以上の実装。`MODE_IN_COMMUNICATION` + `setCommunicationDevice` |
+| `PcmPlayback.kt` | オンラインの訳音声(24kHz PCM16)を `AudioTrack` で再生する。`EchoGate` を実装 |
+| `TtsPlayback.kt` | オフラインの訳文を専用の `TextToSpeech` で読み上げる。`EchoGate` を実装 |
+
+ルーティングの実装を `AudioRouter` の背後に置いているのは、下記の前提が実機で崩れたときにエンジンを触らず差し替えられるようにするため。
+
+### 仕組み
+
+1. セッション開始時に `begin()` が `AudioManager.mode` を `MODE_IN_COMMUNICATION` にする。権限は `MODIFY_AUDIO_SETTINGS`。
+   イヤホンの有無もここで調べる。
+2. 発話(セグメント)ごとに `routeTo(audience)` を呼ぶ。`ME` なら優先順(有線ヘッドセット → 有線ヘッドホン → USB → BLE → Bluetooth SCO → 補聴器)で
+   最初に見つかったイヤホン、`PARTNER` なら内蔵スピーカーを `setCommunicationDevice` で指定する。
+   デバイスは呼ぶたびに OS から引き直し、キャッシュしない。切り替えた直後は `ROUTE_SETTLE_MS`(200ms)待つ。
+   待たないと次の発話の頭が古いデバイスに出る。
+3. 再生は**一度に 1 セグメント**。自分向けと相手向けは交互に再生し、同時には出さない
+   (キューの先頭が先に届いたほうを先に再生する)。オンラインは発話ごとに新しい `AudioTrack` を作り、
+   選んだデバイスで開く。
+4. `AudioTrack` と TTS には必ず `router.playbackAttributes`(`USAGE_VOICE_COMMUNICATION`)を使う。通常のメディア属性だと通信デバイスの設定に追従しない。
+5. 終了時に `end()` が通信デバイスを解除して `MODE_NORMAL` に戻す。`end()` は冪等で、どのスレッドからも呼べる。
+   次の安全策が重なる: エンジンの `finally`、新しいセッションが残った古いルーターを先に `end()` すること、
+   サービスの `onDestroy` が自分の世代のルーターだけを `releaseActive` で終了すること(世代で新しいセッションのルーターを巻き込まない)。
+6. キャプチャは内蔵マイクに固定する(`builtinMic()`)。Bluetooth ヘッドセットの SCO 入力に切り替わらないようにする意図。
+7. 通信用の再生は通話音量に従うので、Conversation の録音中は画面で `volumeControlStream` を `STREAM_VOICE_CALL` にして、音量キーがその音量を操作するようにする。
+
+**イヤホンが無い場合**は、`begin()` が「分離できない」ことを返し、画面に注意書きを出す。
+`routeTo` はどちらの向きでも内蔵スピーカーを指定するので、両方向ともスピーカーで再生される
+(`ME` でもイヤホンが見つからなければスピーカー)。
+
+### エコーゲート
+
+スピーカーで再生した訳音声をマイクが拾い、別の方向に再入力すると、訳が訳を呼ぶ。これを防ぐのがエコーゲート。
+
+- `PcmPlayback` / `TtsPlayback` が `EchoGate.speakerBusy` を公開する。**実際にスピーカーで鳴らす間**(と、その後の残響用の `ECHO_TAIL_MS` = 300ms)だけ true。
+  `routeTo` が `SPEAKER` を返したか、切り替えに失敗して出力先が不明なときは、スピーカー扱いにする(誤って黙らせる側に倒す)。
+- キャプチャスレッドが `ConversationInputGate.decide(speaking, speakerBusy)` で毎チャンク判定する。
+  ミュートするのは**相手側(`PARTNER`)の方向だけ**。イヤホンが無いと相手の訳もスピーカーで鳴るので、
+  スピーカーの再生中は相手の方向を止める。**Speaking を押している間(自分の方向)は上書きしない**。
+- ミュートしたチャンクは、捨てずに無音(ゼロ)に置き換える。プロバイダ / VAD に渡す音声のタイムラインを途切れさせないため。
+- TTS は、言語データが無いロケールを先にスキップする(出力先の切り替えもミュートもしない)。
+
+### Stop 時の挙動
+
+Conversation で Stop すると、再生待ち・再生中の訳音声(`PcmPlayback` / `TtsPlayback` のキュー)は即座に破棄する。
+訳文のテキストは画面に出た時点で保存済みなので失われない。Listen は最後の読み上げを最後まで再生する。
+
+### 実機で未検証の前提
+
+ルーティングは**ビルドと単体テストまでしか確認しておらず、実機では未検証**。次は仮定のままになっている:
+
+- `MODE_IN_COMMUNICATION` 中に `setCommunicationDevice` で、有線 / USB / Bluetooth のイヤホンと内蔵スピーカーを発話ごとに切り替えられる。
+- `ROUTE_SETTLE_MS`(200ms)で、切り替え直後の音頭が欠けない。
+- Bluetooth イヤホンで SCO / LE Audio のどちらになり、入力が内蔵マイクのままか。A2DP のみの機器はイヤホン無し扱いになる。
+- `TextToSpeech.setAudioAttributes` で、TTS もスピーカー / イヤホンに追従する。
+- セッション終了後、他アプリの再生に影響しない(`MODE_NORMAL` と通信デバイスの解除が確実に戻る)。
+- Streaming の Conversation で、Speaking の切り替え時に最後の数語が欠けないか(欠けるなら、方向を切り替える前に旧方向の無音を送ってから `asrStreamReset` する)。
+
+端末が手に入ったら、有線 / Bluetooth / イヤホン無し / API 31 未満 / 異常終了(タスク削除・Stop・片方のセッション切断)でモードが戻ることを順に確認する。
 
 ---
 
@@ -230,6 +367,9 @@ Hy-MT2 の量子化は、より低ビットの型が mainline の llama.cpp に�
   VAD 4 ノブ / endpoint 3 ルール / オンラインのプロバイダ・idle gap・暗号化済みキー。
   `asrMode` は、保存値があればそれを優先し、なければ旧版の `streamingAsr`(真偽値)から移行し、
   どちらもなければ `SEGMENTED`。`asrMode` を保存した時点で旧キーは削除する。
+- **セッションモード**: `SessionMode`(`LISTEN` / `CONVERSATION`)と、モードごとに別々に持つ相手の言語
+  (Listen は Auto 可、Conversation は必ず具体的な言語)。不明な値は `LISTEN` に戻す。
+  保存した Conversation を API 31 未満で読んだ場合も `LISTEN` に戻す。
 - **キー暗号化**: `data/SecureKeyStore.kt`(Tink AEAD)。
   `EncryptedSharedPreferences` は 2026 に deprecated のため不採用。
 
@@ -289,16 +429,24 @@ Rust 側からは直接使わず、別ビルドもしない。
 
 ## 10. 既知の制約
 
-- 対応言語は EN↔JA のみ。`LANGUAGES` に行を足せば広がるが、ASR(SenseVoice / Nemotron 3.5)・翻訳モデル・
-  OS TTS の対応が前提(LFM2 は EN↔JA 専用なので、他の言語ペアには Hy-MT2 が要る)。
+- オフラインの対応言語は EN↔JA のみ。FR / DE / IT / ZH は Conversation のオンラインだけで使える(§5)。
+  オフラインを広げるには、ASR(SenseVoice / Nemotron 3.5)・翻訳モデル・OS TTS の対応が前提
+  (LFM2 は EN↔JA 専用なので、他の言語ペアには多言語の翻訳モデルが要る)。
 - オフライン翻訳は dot-product 命令(ASIMDDP)を持つ arm64 CPU を要する。非対応の端末では §3 のゲートが
   オフライン開始を断る。**残るリスク**: ggml-cpu の C++ 静的初期化子は `libtranslatecore.so` の `dlopen` 時に、
   Rust のコードより前に走る。その中に dotprod 命令があるとゲートでは防げない。静的初期化子は通常、量子化の
   ドット積を行わないが、古い端末(Cortex-A53 のみなど)での起動確認はまだ取れていない。
 - Hy-MT2 の 1.25 / 2 ビット版 GGUF は mainline の llama.cpp ではロードできないため使っていない(Q4_K_M を使用)。
 - Streaming モード(Nemotron 3.5)の日本語精度は SenseVoice より低い。
-- オンラインは片方向(target 固定 + source 自動検出)。
-- スピーカー再生だとエコーで自分の訳音声を拾い得る。オンラインは HW AEC を効かせているが、
+- Listen のオンラインは片方向(target 固定 + source 自動検出)。双方向は Conversation(2 セッション)で扱う。
+- Conversation は Android 12(API 31)以上のみ。それ未満では選べない。
+- Conversation のオンラインは 2 セッションを同時に接続するので、課金も 2 本分になり得る。
+- Conversation の出力先ルーティング(`MODE_IN_COMMUNICATION` + `setCommunicationDevice`)は**実機で未検証**(§5a)。
+  音頭の欠け、Bluetooth の経路、TTS の出力先追従などは端末で確認するまで確定しない。
+- Conversation でイヤホンが無いと、両方向ともスピーカーで鳴る。エコーゲートが相手方向のマイクを止めるため、
+  訳の再生中は相手の発話を取りこぼし得る(自分が Speaking で話す方向は止めない)。
+- Conversation で Stop すると、再生待ち・再生中の訳音声は破棄される(テキストは保存済み)。
+- Listen でスピーカー再生だとエコーで自分の訳音声を拾い得る。オンラインは HW AEC を効かせているが、
   イヤホン利用を推奨。
 - ターン区切りはヒューリスティック(VAD ノブ / endpoint rule / idle gap)なので、
   環境と話し方で体感が変わる。
