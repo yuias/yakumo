@@ -13,6 +13,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import app.rly3h.yakumo.audio.AudioRouters
 
 /**
  * Keeps the process in the foreground while a session records.
@@ -24,6 +25,11 @@ import androidx.core.content.ContextCompat
  */
 class RecordingService : Service() {
 
+  // Router generation of the session this instance serves. onDestroy arrives asynchronously after
+  // stopService, so a newer session's router may exist by then and must not be ended. Contract for callers:
+  // call AudioRouters.create before or in the same main-thread turn as RecordingService.start.
+  private var routerOwner = NO_ROUTER_OWNER
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -33,6 +39,7 @@ class RecordingService : Service() {
       onStopRequested?.invoke()
       return START_NOT_STICKY
     }
+    routerOwner = AudioRouters.generation()
     createChannel()
     val type =
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
@@ -42,6 +49,12 @@ class RecordingService : Service() {
     // Not sticky: a session that the OS killed should not silently resume with
     // a live microphone and no UI behind it.
     return START_NOT_STICKY
+  }
+
+  override fun onDestroy() {
+    // Safety net: if only the service is stopped, the audio mode must not stay in communication.
+    AudioRouters.releaseActive(routerOwner)
+    super.onDestroy()
   }
 
   override fun onTaskRemoved(rootIntent: Intent?) {
@@ -89,6 +102,7 @@ class RecordingService : Service() {
   companion object {
     private const val CHANNEL_ID = "recording"
     private const val NOTIFICATION_ID = 1
+    private const val NO_ROUTER_OWNER = -1L
     private const val ACTION_STOP = "app.rly3h.yakumo.STOP_RECORDING"
 
     /**
