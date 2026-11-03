@@ -65,12 +65,12 @@ that the keystore it names exists, and lists anything missing. It then runs
 `:app:assembleRelease`, fails if the APK is not signed, and prints the signing
 certificate with `apksigner` (found through `ANDROID_HOME`).
 
-Output: `android/app/build/outputs/apk/release/app-release.apk`
+Output: `android/app/build/outputs/apk/release/yakumo.apk`
 
 ### 5. Install
 
 ```sh
-adb install -r android/app/build/outputs/apk/release/app-release.apk
+adb install -r android/app/build/outputs/apk/release/yakumo.apk
 ```
 
 ## GitHub Actions
@@ -110,7 +110,7 @@ Tag the commit that contains the version bump, so the tag and `versionName` agre
 ## Notes
 
 - **Unsigned fallback**: Gradle does not fail when a signing value is missing; it
-  produces `app-release-unsigned.apk`, which Android refuses to install. The
+  produces `yakumo-unsigned.apk`, which Android refuses to install. The
   build scripts treat that as an error. A blank value counts as missing.
 - **Environment variables**: instead of `keystore.properties`, Gradle also reads
   `YAKUMO_KEYSTORE_FILE`, `YAKUMO_KEYSTORE_PASSWORD`, `YAKUMO_KEY_ALIAS`, and

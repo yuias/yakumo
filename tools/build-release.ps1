@@ -45,16 +45,16 @@ if ($problems) {
 
 # ---- Build ----------------------------------------------------------------
 $outDir = Join-Path $android 'app\build\outputs\apk\release'
-$apk = Join-Path $outDir 'app-release.apk'
+$apk = Join-Path $outDir 'yakumo.apk'
 # Remove earlier outputs so a stale APK cannot pass the check below.
-Remove-Item (Join-Path $outDir 'app-release*.apk') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $outDir 'yakumo*.apk') -ErrorAction SilentlyContinue
 
 Write-Host '== Building release APK ==' -ForegroundColor Cyan
 & (Join-Path $android 'gradlew.bat') -p $android :app:assembleRelease --console=plain
 if ($LASTEXITCODE -ne 0) { Write-Host 'error: Gradle build failed.' -ForegroundColor Red; exit 1 }
 
 if (-not (Test-Path $apk)) {
-    Write-Host 'error: Gradle did not produce a signed APK (app-release.apk). Check the values in android/keystore.properties.' -ForegroundColor Red
+    Write-Host 'error: Gradle did not produce a signed APK (yakumo.apk). Check the values in android/keystore.properties.' -ForegroundColor Red
     exit 1
 }
 
@@ -76,4 +76,4 @@ else {
     Write-Host 'warning: apksigner not found (set ANDROID_HOME); signature not verified.' -ForegroundColor Yellow
 }
 
-Write-Host "Signed APK: android/app/build/outputs/apk/release/app-release.apk" -ForegroundColor Green
+Write-Host "Signed APK: android/app/build/outputs/apk/release/yakumo.apk" -ForegroundColor Green

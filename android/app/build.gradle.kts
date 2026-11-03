@@ -111,6 +111,19 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        // An unsigned release keeps a distinct name so it cannot be mistaken for
+        // an installable build (tools/build-release.* check for yakumo.apk).
+        val apkName = when {
+            variant.buildType == "debug" -> "yakumo.debug.apk"
+            releaseStorePath != null -> "yakumo.apk"
+            else -> "yakumo-unsigned.apk"
+        }
+        variant.outputs.forEach { it.outputFileName.set(apkName) }
+    }
+}
+
 kotlin {
     jvmToolchain(17)
 }

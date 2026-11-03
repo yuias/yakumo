@@ -53,9 +53,9 @@ fi
 
 # ---- Build ----------------------------------------------------------------
 out_dir="$android/app/build/outputs/apk/release"
-apk="$out_dir/app-release.apk"
+apk="$out_dir/yakumo.apk"
 # Remove earlier outputs so a stale APK cannot pass the check below.
-rm -f "$out_dir"/app-release*.apk
+rm -f "$out_dir"/yakumo*.apk
 
 echo "== Building release APK =="
 sh "$android/gradlew" -p "$android" :app:assembleRelease --console=plain || {
@@ -64,7 +64,7 @@ sh "$android/gradlew" -p "$android" :app:assembleRelease --console=plain || {
 }
 
 if [ ! -f "$apk" ]; then
-  err "Gradle did not produce a signed APK (app-release.apk). Check the values in android/keystore.properties."
+  err "Gradle did not produce a signed APK (yakumo.apk). Check the values in android/keystore.properties."
   exit 1
 fi
 
@@ -89,4 +89,4 @@ else
   echo "warning: apksigner not found (set ANDROID_HOME); signature not verified." >&2
 fi
 
-echo "Signed APK: android/app/build/outputs/apk/release/app-release.apk"
+echo "Signed APK: android/app/build/outputs/apk/release/yakumo.apk"

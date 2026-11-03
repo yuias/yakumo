@@ -82,7 +82,7 @@ jobs:
       - name: Stage APK
         id: apk
         run: |
-          src=android/app/build/outputs/apk/release/app-release.apk
+          src=android/app/build/outputs/apk/release/yakumo.apk
           name="yakumo-${GITHUB_REF_NAME}.apk"
           cp "$src" "$name"
           echo "path=$name" >> "$GITHUB_OUTPUT"

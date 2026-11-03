@@ -32,7 +32,7 @@ Android 向けの英語↔日本語音声翻訳アプリ。音声認識と翻訳
 ```sh
 cd android
 ./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install app/build/outputs/apk/debug/yakumo.debug.apk
 ```
 
 Windows では `./gradlew` の代わりに `.\gradlew.bat` を使う。署名付きのリリースビルドは [README.RELEASE.md](README.RELEASE.md) を参照。
