@@ -1,8 +1,8 @@
 # Builds the Rust core for Android and regenerates the UniFFI Kotlin bindings.
 # Run from anywhere; paths are resolved relative to this script.
 #
-#   pwsh rust/build-android.ps1            # arm64 + x86_64 (default)
-#   pwsh rust/build-android.ps1 -Release   # optimized build
+#   pwsh tools/build-rust-core.ps1            # arm64 + x86_64 (default)
+#   pwsh tools/build-rust-core.ps1 -Release   # optimized build
 param(
     [string[]]$Abis = @('arm64-v8a', 'x86_64'),
     [switch]$Release
@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot          # repo root
-$crate = Join-Path $PSScriptRoot 'core'
+$crate = Join-Path $root 'rust\core'
 $jniLibs = Join-Path $root 'android\app\src\main\jniLibs'
 $ktOut = Join-Path $root 'android\app\src\main\java'
 

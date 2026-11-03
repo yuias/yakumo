@@ -127,7 +127,7 @@ val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
 // One cargo-ndk invocation per ABI: GGML_CPU_ARM_ARCH (llama.cpp's dot-product
 // build) must reach the arm64 configure only. llama-cpp-sys-2 forwards every GGML_*
 // env var to CMake for all ABIs, so a shared .cargo/config.toml [env] entry would
-// leak into x86_64. Keep the value in sync with rust/build-android.ps1.
+// leak into x86_64. Keep the value in sync with tools/build-rust-core.ps1.
 val ggmlArm64Arch = "armv8.2-a+dotprod"
 
 fun registerCargoBuild(taskName: String, abi: String, env: Map<String, String>) =
