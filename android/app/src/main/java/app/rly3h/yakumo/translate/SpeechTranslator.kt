@@ -1,6 +1,7 @@
 package app.rly3h.yakumo.translate
 
 import kotlinx.coroutines.CoroutineScope
+import java.util.concurrent.atomic.AtomicLong
 
 /** Who spoke a turn in Conversation mode; null in Listen mode. */
 enum class Speaker { ME, PARTNER }
@@ -24,6 +25,16 @@ data class LiveTurn(
   val translation: String? = null,
   val speaker: Speaker? = null,
 )
+
+/**
+ * Source of [LiveTurn.id]s. Process-wide rather than per engine: the session list
+ * keeps its turns across engine restarts (stop, then start again without a reset),
+ * so a per-engine counter restarting at 0 would repeat ids and crash the keyed list.
+ */
+internal object TurnIds {
+  private val next = AtomicLong()
+  fun next(): Long = next.getAndIncrement()
+}
 
 /**
  * The seam between an engine and the session screen. Each method maps 1:1 onto a

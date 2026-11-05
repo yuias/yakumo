@@ -5,7 +5,6 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.util.Base64
 import app.rly3h.yakumo.ui.session.SAMPLE_RATE_24K
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.channels.Channel
 
 /**
@@ -34,7 +33,6 @@ internal class RealtimeTurnAssembler(
   // punctuation so the log breaks into sentences instead of one endless row.
   private val splitOnSentenceEnd: Boolean = false,
 ) {
-  private val nextId = AtomicLong(0L)
   private val lock = Any()
   private var currentTurnId: Long? = null
   private var srcAcc = StringBuilder()
@@ -90,7 +88,7 @@ internal class RealtimeTurnAssembler(
   // Caller holds [lock].
   private fun ensureTurn(): Long {
     currentTurnId?.let { return it }
-    val id = nextId.getAndIncrement()
+    val id = TurnIds.next()
     currentTurnId = id
     srcAcc = StringBuilder()
     tgtAcc = StringBuilder()

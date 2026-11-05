@@ -17,7 +17,6 @@ import app.rly3h.yakumo.ui.session.SAMPLE_RATE_16K
 import app.rly3h.yakumo.ui.session.rawChunkCaptureLoop
 import app.rly3h.yakumo.ui.session.resolveDirection
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +83,6 @@ internal class OfflineTranslator(
   private val vadDir = Models.dir(context, "vad")
 
   private val running = AtomicBoolean(false)
-  private val nextId = AtomicLong(0L)
 
   // Background model load. Launched on the caller's scope rather than as a child of
   // the session coroutine so a slow native load never delays onFinished; stop()
@@ -147,7 +145,7 @@ internal class OfflineTranslator(
     val src = srcOpt.flores
     val tgt = tgtOpt.flores
 
-    val id = nextId.getAndIncrement()
+    val id = TurnIds.next()
     withContext(Dispatchers.Main) {
       cb.onTurnStart(LiveTurn(id, transcript, src, tgt, lang, translation = null, speaker = speaker))
     }
