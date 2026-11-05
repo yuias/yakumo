@@ -34,10 +34,10 @@ class SettingsLogicTest {
 
   @Test
   fun requiredModelsForAllCombinations() {
-    assertEquals(listOf("vad", "asr", "mt_lfm2"), requiredModelIds(AsrMode.SEGMENTED, MtModel.LFM2))
-    assertEquals(listOf("vad", "asr", "mt_hymt2"), requiredModelIds(AsrMode.SEGMENTED, MtModel.HYMT2))
-    assertEquals(listOf("asr_stream", "mt_lfm2"), requiredModelIds(AsrMode.STREAMING, MtModel.LFM2))
-    assertEquals(listOf("asr_stream", "mt_hymt2"), requiredModelIds(AsrMode.STREAMING, MtModel.HYMT2))
+    assertEquals(listOf("vad", "asr", "mt_plamo3_0_8b"), requiredModelIds(AsrMode.SEGMENTED, MtModel.PLAMO3_0_8B))
+    assertEquals(listOf("vad", "asr", "mt_plamo3_2b"), requiredModelIds(AsrMode.SEGMENTED, MtModel.PLAMO3_2B))
+    assertEquals(listOf("asr_stream", "mt_plamo3_0_8b"), requiredModelIds(AsrMode.STREAMING, MtModel.PLAMO3_0_8B))
+    assertEquals(listOf("asr_stream", "mt_plamo3_2b"), requiredModelIds(AsrMode.STREAMING, MtModel.PLAMO3_2B))
   }
 
   @Test

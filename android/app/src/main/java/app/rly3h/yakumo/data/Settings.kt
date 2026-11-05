@@ -15,7 +15,7 @@ enum class OnlineProvider { OPENAI, GEMINI }
 enum class AsrMode { SEGMENTED, STREAMING }
 
 /** Offline translation model; [modelId] is the models.json entry holding its GGUF. */
-enum class MtModel(val modelId: String) { LFM2("mt_lfm2"), HYMT2("mt_hymt2") }
+enum class MtModel(val modelId: String) { PLAMO3_0_8B("mt_plamo3_0_8b"), PLAMO3_2B("mt_plamo3_2b") }
 
 /** Stored mode wins; otherwise the legacy streamingAsr boolean; otherwise SEGMENTED. */
 internal fun migrateAsrMode(stored: String?, legacyStreaming: Boolean?): AsrMode =
@@ -74,9 +74,9 @@ class Settings(context: Context) {
     )
     set(v) = prefs.edit().putString(KEY_ASR_MODE, v.name).remove(KEY_STREAMING_ASR).apply()
 
-  /** Offline translation model; LFM2 by default, and an unknown stored value also falls back to it. */
+  /** Offline translation model; PLaMo 3 0.8B by default, and an unknown stored value (such as a removed model) also falls back to it. */
   var mtModel: MtModel
-    get() = MtModel.entries.firstOrNull { it.name == prefs.getString(KEY_MT_MODEL, null) } ?: MtModel.LFM2
+    get() = MtModel.entries.firstOrNull { it.name == prefs.getString(KEY_MT_MODEL, null) } ?: MtModel.PLAMO3_0_8B
     set(v) = prefs.edit().putString(KEY_MT_MODEL, v.name).apply()
 
   fun requiredModelIds(): List<String> = requiredModelIds(asrMode, mtModel)

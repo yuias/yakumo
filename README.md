@@ -9,7 +9,7 @@ Android 向けの英語 ↔ 日本語音声翻訳アプリケーション。
 - 2つの音声認識モード
   - **Segmented**: 発話ごとに区切って認識する (高精度、デフォルト)
   - **Streaming**: 発話中に認識結果を逐次表示する
-- 翻訳モデルは `LFM2-350M-ENJP-MT` (default) と `Hy-MT2-1.8B` から選択可能
+- 翻訳モデルは `PLaMo 3 Translate 0.8B` (default) と `PLaMo 3 Translate 2B` から選択可能
 - オンライン翻訳モード (option: OpenAI Realtime / Gemini Live Translate)
 - 2つのセッションモード
   - **Listen**: 相手の発話を聞き取り、自分の言語に翻訳して読み上げる
@@ -90,15 +90,16 @@ Conversation モードの制約:
 | `vad` | [Silero VAD](https://github.com/snakers4/silero-vad) v6.2.3 | 発話区間検出 (Segmented) | ~2 MB | MIT |
 | `asr` | [SenseVoice int8](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) (sherpa-onnx) | 音声認識・言語判定 (Segmented) | ~230 MB | FunASR model license |
 | `asr_stream` | [Nemotron 3.5 ASR streaming 0.6B int8](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) (sherpa-onnx) | 音声認識 (Streaming) | ~475 MB | OpenMDW-1.1 |
-| `mt_lfm2` | [LFM2-350M-ENJP-MT](https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF) (GGUF Q8_0) | 翻訳 (default, EN↔JA 専用) | ~379 MB | LFM Open License v1.0 |
-| `mt_hymt2` | [Hy-MT2-1.8B](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF) (GGUF Q4_K_M) | 翻訳 (多言語) | ~1.1 GB | Apache-2.0 |
+| `mt_plamo3_0_8b` | [PLaMo 3 Translate 0.8B](https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF) (GGUF Q4_0) | 翻訳 (default) | ~548 MB | PLaMo Community License |
+| `mt_plamo3_2b` | [PLaMo 3 Translate 2B](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF) (GGUF Q4_0) | 翻訳 (高精度) | ~1.7 GB | PLaMo Community License |
 
 - Segmented は `vad` + `asr`、Streaming は `asr_stream` を使用する。
 - Streaming は認識の途中経過を表示できる反面、日本語の認識精度は Segmented に劣る。
 - 翻訳モデルは選択中の 1 つのみメモリにロードする。
-  - LFM2 は軽量で高速
-  - Hy-MT2 は多言語対応だがサイズが大きくメモリ消費量も多い
-- LFM Open License v1.0 では条件付きで非商用利用が許諾されている (商用利用は年間売上 1,000 万米ドル未満に制限).
+  - 0.8B は軽量で高速
+  - 2B は精度が高いがサイズが大きくメモリ消費量も多い (RAM に余裕のある端末向け)
+- PLaMo Community License では非商用利用は無償。商用利用には PFN への登録が必要 (年間売上 10 億円超は別途契約)。
+- Built with PLaMo
 
 ## License
 

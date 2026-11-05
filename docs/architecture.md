@@ -56,7 +56,7 @@ A session has one of two modes (§5). **Listen** (default) uses the first three 
 AudioRecord (VOICE_RECOGNITION, 16 kHz mono PCM16, ~100 ms frames)
   → VAD          Silero VAD v6 (Rust: vad_load / vad_accept / vad_flush)                 → segments
   → ASR          SenseVoice int8 (with language tag) or streaming Nemotron 3.5           → transcript
-  → Translation  GGUF translation LLM (llama.cpp: LFM2-350M-ENJP-MT or Hy-MT2-1.8B)      → translation
+  → Translation  GGUF translation LLM (llama.cpp: PLaMo 3 Translate 0.8B or 2B)          → translation
   → Speech       OS android.speech.tts.TextToSpeech
   → Storage      filesDir/sessions/<id>.json
 ```
@@ -96,21 +96,30 @@ Only one is used at a time; the engine of the other is unloaded (see below).
 ### Translation
 
 llama.cpp (the `llama-cpp-2` crate) is linked statically into `libtranslatecore.so` and runs a GGUF translation LLM on the CPU
-(`rust/core/src/mt.rs`). The user picks one model in Settings → Translation (setting `mtModel`, default LFM2):
+(`rust/core/src/mt.rs`). The user picks one model in Settings → Translation (setting `mtModel`, default 0.8B):
 
-| Model | Characteristics | Prompt |
-|---|---|---|
-| LFM2-350M-ENJP-MT (Q8_0) | EN↔JA only. Small and fast | system: `Translate to Japanese.` / `Translate to English.`, user: source text |
-| Hy-MT2-1.8B (Q4_K_M) | Multilingual. Larger and slower | user: `Translate the following text into <language name>. Note that you should only output the translated result without any additional explanation:` + source text |
+| Model | Characteristics |
+|---|---|
+| PLaMo 3 Translate 0.8B (Q4_0) | Small and fast |
+| PLaMo 3 Translate 2B (Q4_0) | More accurate. Larger and slower |
 
-- **The recipe is chosen by the GGUF `general.architecture`** (`lfm2` / `hunyuan-dense`). Switching to another
-  quantization of the same model only needs a manifest edit. Any other architecture fails at load time.
-- **The chat template is selected by name from llama.cpp's built-in templates** (`chatml` for LFM2, `hunyuan-dense` for Hy-MT2).
-  Auto-detection from the template embedded in the GGUF is not used, because it misidentifies the Hy-MT2 template as
-  `hunyuan-vl` and builds a broken prompt. Neither built-in template emits BOS, so BOS is prepended as text.
-  At load time the code also checks that the embedded template contains the recipe's marker.
-- **Sampling uses each model card's values with a fixed seed**: LFM2 temp 0.5 / min_p 0.1 / repeat penalty 1.05,
-  Hy-MT2 temp 0.7 / top_k 20 / top_p 0.6 / repeat penalty 1.05. The same input gives the same output.
+Q4_0 is used because llama.cpp's Arm CPU backend has optimized kernels for it; the model card reports EN↔JA accuracy
+close to Q4_K_M at a slightly smaller size.
+
+- **Only the GGUF architecture `plamo3` is accepted.** Switching to another quantization or size of PLaMo 3 Translate
+  only needs a manifest edit. Any other architecture fails at load time, as does a vocabulary without the
+  `<|plamo:tag|>` / `<|plamo:bos|>` control tokens.
+- **The prompt is built directly in PFML3**, as the model card recommends for applications, instead of through a chat
+  template: `<|plamo:tag|>dataset<|plamo:msg|>translation<|plamo:tag|>input<|plamo:msg|><source>`
+  `<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|><en|ja><|plamo:msg|>`. The source language is omitted, so a
+  misdetected source still translates. llama.cpp's plamo2 tokenizer does not insert BOS, so the BOS token is prepended.
+- **Tokenizer override**: the GGUF declares the `plamo3` tokenizer, which the bundled llama.cpp predates
+  (ggml-org/llama.cpp#30045) and rejects. The model is loaded with `tokenizer.ggml.model` overridden to `plamo2`, the same
+  Unigram tokenizer without plamo3's pre-segmentation (only runs of 4+ identical characters or 2+ spaces split
+  differently). Remove the override once `llama-cpp-2` bundles a llama.cpp with the plamo3 tokenizer.
+- **Generation stops** at an end-of-generation token or at `<|plamo:tag|>` / `<|plamo:bos|>`, which the model emits
+  after the translation.
+- **Decoding is greedy** (temperature 0, as in the model card), so the same input gives the same output.
 - **Generation length** is capped at `min(3 × source tokens + 32, 512)`, with a 1024-token context. The cap stops runaway
   generation. An input whose prompt leaves no room for output is rejected with `input too long for translation`.
 - **Streaming**: `mt_translate_streaming` calls the callback after each generated token with the accumulated text so far
@@ -346,18 +355,14 @@ according to the manifest `assets/models.json`.
 | `vad` | Silero VAD v6.2.3 | Turn segmentation (Segmented) | ~2 MB |
 | `asr` | SenseVoice int8 (zh-en-ja-ko-yue) | ASR + language ID (Segmented) | ~230 MB |
 | `asr_stream` | Nemotron 3.5 ASR streaming 0.6B int8 | Low-latency multilingual ASR (Streaming) | ~475 MB |
-| `mt_lfm2` | LFM2-350M-ENJP-MT (GGUF, Q8_0) | Translation (default, EN↔JA only) | ~379 MB |
-| `mt_hymt2` | Hy-MT2-1.8B (GGUF, Q4_K_M) | Translation (multilingual) | ~1.1 GB |
+| `mt_plamo3_0_8b` | PLaMo 3 Translate 0.8B (GGUF, Q4_0) | Translation (default) | ~548 MB |
+| `mt_plamo3_2b` | PLaMo 3 Translate 2B (GGUF, Q4_0) | Translation (more accurate, more RAM) | ~1.7 GB |
 
 In Settings → Models, entries needed by the current ASR mode and translation model are marked "· in use".
 The "Download models for current settings" button downloads the missing ones
 (Segmented: `vad` + `asr` + translation model; Streaming: `asr_stream` + translation model).
 Each model can also be deleted in Settings (not while recording); the native engine using it is unloaded first
 (the GGUF is memory-mapped, so it must not be deleted while loaded).
-
-The Hy-MT2 quantization may change once a lower-bit type is supported by mainline llama.cpp and Tencent redistributes it.
-That also only needs a manifest edit (noted here because JSON has no comments).
-The current 1.25 / 2-bit GGUFs cannot be loaded by mainline llama.cpp.
 
 > **Internal storage is required**: on some OEM builds (ColorOS / OxygenOS, for example) a raw NDK `open()` on
 > external storage (`Android/data`) fails with EACCES. Java's `File.exists()` succeeds there while `listFiles()`
@@ -370,7 +375,7 @@ The current 1.25 / 2-bit GGUFs cannot be loaded by mainline llama.cpp.
 - **Sessions**: `data/SessionStore.kt`. One file per session at `filesDir/sessions/<id>.json`.
   There are few sessions and no schema is needed, so kotlinx.serialization JSON is used instead of a database.
 - **Settings**: `data/Settings.kt` (SharedPreferences). Speech rate / auto-speak / ASR mode (`asrMode`: `SEGMENTED` / `STREAMING`) /
-  translation model (`mtModel`: `LFM2` / `HYMT2`, default `LFM2`, unknown values fall back to `LFM2`) /
+  translation model (`mtModel`: `PLAMO3_0_8B` / `PLAMO3_2B`, default `PLAMO3_0_8B`; unknown values, including the removed `LFM2` / `HYMT2`, fall back to it) /
   the four VAD parameters / three endpoint rules / online provider, idle gap, and encrypted keys.
   `asrMode` uses the saved value if present, otherwise migrates the old `streamingAsr` boolean,
   otherwise defaults to `SEGMENTED`. Saving `asrMode` deletes the old key.
@@ -440,12 +445,11 @@ The Rust side does not use it directly, and it is not built separately.
 
 - Offline supports EN↔JA only. FR / DE / IT / ZH are available only in online Conversation (§5).
   Extending offline needs support in ASR (SenseVoice / Nemotron 3.5), the translation model, and OS TTS
-  (LFM2 is EN↔JA only, so other pairs need a multilingual translation model).
 - Offline translation needs an arm64 CPU with the dot-product instruction (ASIMDDP). On other devices the gate in §3
   refuses to start offline. **Remaining risk**: ggml-cpu's C++ static initializers run when `libtranslatecore.so` is
   `dlopen`ed, before any Rust code. If one of them executes a dotprod instruction, the gate cannot prevent the crash.
   Static initializers normally do no quantized dot products, but startup on old devices (Cortex-A53 only, for example) has not been confirmed.
-- Hy-MT2's 1.25 / 2-bit GGUFs cannot be loaded by mainline llama.cpp, so Q4_K_M is used.
+- PLaMo 3 Translate is tokenized with llama.cpp's plamo2 tokenizer until the bundled llama.cpp supports plamo3 (§3).
 - Streaming mode (Nemotron 3.5) is less accurate for Japanese than SenseVoice.
 - Online Listen is one-way (fixed target + auto-detected source). Two-way is handled by Conversation (two sessions).
 - Conversation requires Android 12 (API 31) or later and cannot be selected below that.

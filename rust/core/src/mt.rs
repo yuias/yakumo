@@ -49,95 +49,35 @@ pub(crate) fn cpu_supported() -> bool {
 const N_CTX: u32 = 1024;
 /// Hard cap on generated tokens, whatever the source length.
 const MAX_NEW_CAP: usize = 512;
-/// Fixed seed so the same input gives the same output.
-const SEED: u32 = 0x5EED;
 /// A prompt must leave at least this many tokens of room for the answer.
 const MIN_GEN_ROOM: usize = 16;
 
-const ENG: &str = "eng_Latn";
-const JPN: &str = "jpn_Jpan";
+/// The only GGUF architecture whose prompt format this module builds.
+const PLAMO3_ARCH: &str = "plamo3";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Recipe {
-    Lfm2EnJa,
-    HyMt2,
-}
+/// PFML3 control tokens. Generation ends when the model opens the next element or
+/// a new sequence, which llama.cpp does not mark as end-of-generation.
+const TAG: &str = "<|plamo:tag|>";
+const BOS: &str = "<|plamo:bos|>";
 
-impl Recipe {
-    /// llama.cpp built-in template name. The embedded template is not auto-detected:
-    /// the detector classifies Hy-MT2's template as `hunyuan-vl` and silently
-    /// renders a malformed prompt.
-    fn template_name(self) -> &'static str {
-        match self {
-            Recipe::Lfm2EnJa => "chatml",
-            Recipe::HyMt2 => "hunyuan-dense",
-        }
-    }
-
-    /// Text the embedded template must contain. Guards against a GGUF whose
-    /// architecture matches but whose chat format differs from the built-in one.
-    fn template_marker(self) -> &'static str {
-        match self {
-            Recipe::Lfm2EnJa => "<|im_start|>",
-            Recipe::HyMt2 => "<\u{ff5c}hy_User\u{ff5c}>",
-        }
-    }
-
-    fn sampling(self) -> &'static Sampling {
-        match self {
-            Recipe::Lfm2EnJa => &LFM2_SAMPLING,
-            Recipe::HyMt2 => &HYMT2_SAMPLING,
-        }
-    }
-}
-
-/// Picks the prompt recipe from the GGUF `general.architecture`, so swapping in
-/// another quantization of the same model is a manifest-only change.
-pub(crate) fn recipe_for_arch(arch: &str) -> Result<Recipe, String> {
-    match arch {
-        "lfm2" => Ok(Recipe::Lfm2EnJa),
-        "hunyuan-dense" => Ok(Recipe::HyMt2),
-        other => Err(format!("unsupported translation model architecture: {other}")),
-    }
-}
-
-/// FLORES code -> English language name used in prompts. Add a row when the
-/// app's language list grows.
-pub(crate) fn language_name(flores: &str) -> Option<&'static str> {
+/// FLORES code -> language code used in PFML3 `lang` attributes. Add a row when
+/// the app's offline language list grows.
+pub(crate) fn pfml3_lang(flores: &str) -> Option<&'static str> {
     match flores {
-        ENG => Some("English"),
-        JPN => Some("Japanese"),
+        "eng_Latn" => Some("en"),
+        "jpn_Jpan" => Some("ja"),
         _ => None,
     }
 }
 
-/// (role, content) chat messages for one request.
-pub(crate) fn chat_messages(
-    r: &Recipe,
-    src: &str,
-    tgt: &str,
-    text: &str,
-) -> Result<Vec<(&'static str, String)>, String> {
-    match r {
-        Recipe::Lfm2EnJa => {
-            let system = match (src, tgt) {
-                (ENG, JPN) => "Translate to Japanese.",
-                (JPN, ENG) => "Translate to English.",
-                _ => return Err("LFM2-ENJP translates English\u{2194}Japanese only".to_owned()),
-            };
-            Ok(vec![("system", system.to_owned()), ("user", text.to_owned())])
-        }
-        Recipe::HyMt2 => {
-            let name =
-                language_name(tgt).ok_or_else(|| format!("unsupported target language: {tgt}"))?;
-            Ok(vec![(
-                "user",
-                format!(
-                    "Translate the following text into {name}. Note that you should only output the translated result without any additional explanation:\n\n{text}"
-                ),
-            )])
-        }
-    }
+/// PFML3 translation prompt without the leading BOS. The source language is left
+/// out, as in the model card's basic example, so a misdetected source still
+/// translates.
+pub(crate) fn pfml3_prompt(tgt: &str, text: &str) -> Result<String, String> {
+    let lang = pfml3_lang(tgt).ok_or_else(|| format!("unsupported target language: {tgt}"))?;
+    Ok(format!(
+        "{TAG}dataset<|plamo:msg|>translation{TAG}input<|plamo:msg|>{text}{TAG}output<|plamo:key|>lang<|plamo:val|>{lang}<|plamo:msg|>"
+    ))
 }
 
 /// Generation budget: a translation rarely exceeds ~3x the source token count.
@@ -191,38 +131,6 @@ impl Utf8Accumulator {
         self.text
     }
 }
-
-/// Model-card sampler settings. `None` skips that stage of the chain.
-pub(crate) struct Sampling {
-    pub(crate) temp: f32,
-    pub(crate) top_k: Option<i32>,
-    pub(crate) top_p: Option<f32>,
-    pub(crate) min_p: Option<f32>,
-    pub(crate) repeat_penalty: f32,
-    pub(crate) penalty_last_n: i32,
-    pub(crate) seed: u32,
-}
-
-pub(crate) const LFM2_SAMPLING: Sampling = Sampling {
-    temp: 0.5,
-    top_k: None,
-    top_p: None,
-    min_p: Some(0.1),
-    repeat_penalty: 1.05,
-    penalty_last_n: 64,
-    seed: SEED,
-};
-
-// top_p 0.6 is the README value for the 1.8B model (the GGUF metadata says 0.8).
-pub(crate) const HYMT2_SAMPLING: Sampling = Sampling {
-    temp: 0.7,
-    top_k: Some(20),
-    top_p: Some(0.6),
-    min_p: None,
-    repeat_penalty: 1.05,
-    penalty_last_n: 64,
-    seed: SEED,
-};
 
 /// Shown to the user whenever the gate refuses to start llama.cpp.
 #[cfg(target_os = "android")]
@@ -289,18 +197,21 @@ pub(crate) fn unload() {}
 #[cfg(target_os = "android")]
 mod imp {
     use super::{
-        chat_messages, cpu_supported, max_new_tokens, recipe_for_arch, Recipe, Sampling,
-        Utf8Accumulator, MIN_GEN_ROOM, N_CTX, UNSUPPORTED_MSG,
+        cpu_supported, max_new_tokens, pfml3_prompt, Utf8Accumulator, BOS, MIN_GEN_ROOM, N_CTX,
+        PLAMO3_ARCH, TAG, UNSUPPORTED_MSG,
     };
     use llama_cpp_2::context::params::LlamaContextParams;
     use llama_cpp_2::llama_backend::LlamaBackend;
     use llama_cpp_2::llama_batch::LlamaBatch;
+    use llama_cpp_2::model::params::kv_overrides::ParamOverrideValue;
     use llama_cpp_2::model::params::LlamaModelParams;
-    use llama_cpp_2::model::{LlamaChatMessage, LlamaChatTemplate, LlamaModel};
+    use llama_cpp_2::model::LlamaModel;
     use llama_cpp_2::sampling::LlamaSampler;
-    use std::ffi::CStr;
+    use llama_cpp_2::token::LlamaToken;
+    use std::ffi::{c_char, CStr};
     use std::num::NonZeroU32;
     use std::path::Path;
+    use std::pin::pin;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     /// Initialized once, after the CPU gate, and never dropped: dropping would call
@@ -314,8 +225,10 @@ mod imp {
     /// borrows the model and cannot live next to it in a global.
     struct MtEngine {
         model_path: String,
-        recipe: Recipe,
         model: LlamaModel,
+        bos: LlamaToken,
+        /// Tokens that end a translation besides the vocabulary's own EOG set.
+        stop: [LlamaToken; 2],
     }
 
     static ENGINE: OnceLock<Mutex<Option<MtEngine>>> = OnceLock::new();
@@ -356,6 +269,15 @@ mod imp {
         format!("llama.cpp: {flat}")
     }
 
+    /// The single token `text` names. A plamo3 GGUF whose vocabulary lacks the
+    /// PFML3 control tokens would otherwise get the markup as plain text.
+    fn control_token(model: &LlamaModel, text: &str) -> Result<LlamaToken, String> {
+        match model.vocab().tokenize(text.as_bytes(), false, true).as_slice() {
+            [t] => Ok(*t),
+            _ => Err(format!("model vocabulary has no {text} token")),
+        }
+    }
+
     /// Makes `guard` hold the model at `path`. A different resident model is freed
     /// first so two sets of weights never coexist in RAM.
     fn ensure_loaded(guard: &mut Option<MtEngine>, path: &str) -> Result<(), String> {
@@ -368,24 +290,34 @@ mod imp {
         if !Path::new(path).is_file() {
             return Err(format!("model file not found: {path}"));
         }
-        let model = LlamaModel::load_from_file(backend, path, &LlamaModelParams::default())
+        // The bundled llama.cpp predates the "plamo3" tokenizer (ggml-org/llama.cpp#30045)
+        // and refuses to load it. "plamo2" is the same Unigram tokenizer without
+        // plamo3's pre-segmentation, which only changes runs of 4+ identical
+        // characters or 2+ spaces, rare in speech transcripts. Drop this override
+        // once llama-cpp-2 ships a llama.cpp with the plamo3 tokenizer.
+        let mut params = pin!(LlamaModelParams::default());
+        let mut tokenizer = [0 as c_char; 128];
+        for (dst, src) in tokenizer.iter_mut().zip(b"plamo2") {
+            *dst = *src as c_char;
+        }
+        params
+            .as_mut()
+            .append_kv_override(c"tokenizer.ggml.model", ParamOverrideValue::Str(tokenizer));
+        let model = LlamaModel::load_from_file(backend, path, &params)
             .map_err(|e| format!("failed to load model: {e}"))?;
         let arch = model
             .meta_val_str("general.architecture")
             .map_err(|e| format!("model has no architecture metadata: {e}"))?;
-        let recipe = recipe_for_arch(&arch)?;
-        let embedded = model
-            .chat_template(None)
-            .ok()
-            .and_then(|t| t.to_string().ok())
-            .unwrap_or_default();
-        if !embedded.contains(recipe.template_marker()) {
-            return Err("unexpected chat template".to_owned());
+        if arch != PLAMO3_ARCH {
+            return Err(format!("unsupported translation model architecture: {arch}"));
         }
+        let bos = control_token(&model, BOS)?;
+        let tag = control_token(&model, TAG)?;
         *guard = Some(MtEngine {
             model_path: path.to_owned(),
-            recipe,
             model,
+            bos,
+            stop: [tag, bos],
         });
         Ok(())
     }
@@ -400,70 +332,28 @@ mod imp {
         *lock_engine() = None;
     }
 
-    fn build_sampler(s: &Sampling, n_vocab: i32) -> LlamaSampler {
-        // The penalty sampler only sees tokens accepted through `sample()`, i.e.
-        // generated ones, so names and numbers copied from the source are not penalised.
-        let mut chain = vec![LlamaSampler::penalties(
-            n_vocab,
-            s.penalty_last_n,
-            s.repeat_penalty,
-            0.0,
-            0.0,
-        )];
-        if let Some(k) = s.top_k {
-            chain.push(LlamaSampler::top_k(k));
-        }
-        if let Some(p) = s.top_p {
-            chain.push(LlamaSampler::top_p(p, 1));
-        }
-        if let Some(p) = s.min_p {
-            chain.push(LlamaSampler::min_p(p, 1));
-        }
-        chain.push(LlamaSampler::temp(s.temp));
-        chain.push(LlamaSampler::dist(s.seed));
-        LlamaSampler::chain_simple(chain)
-    }
-
     pub(super) fn translate_streaming(
         path: &str,
         text: &str,
-        src: &str,
+        _src: &str,
         tgt: &str,
         mut on_partial: impl FnMut(&str),
     ) -> Result<String, String> {
         let backend = backend()?;
         let mut guard = lock_engine();
         ensure_loaded(&mut guard, path)?;
-        let MtEngine { recipe, model, .. } =
+        let MtEngine { model, bos, stop, .. } =
             guard.as_mut().ok_or("translation model is not loaded")?;
 
-        let msgs = chat_messages(recipe, src, tgt, text)?
-            .into_iter()
-            .map(|(role, content)| LlamaChatMessage::new(role.to_owned(), content))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("invalid chat message: {e}"))?;
-        let tmpl = LlamaChatTemplate::new(recipe.template_name())
-            .map_err(|e| format!("invalid chat template name: {e}"))?;
-        let mut prompt = model
-            .apply_chat_template(&tmpl, &msgs, true)
-            .map_err(|e| format!("failed to render prompt: {e}"))?;
-
+        let prompt = pfml3_prompt(tgt, text)?;
         let vocab = model.vocab();
-        // Both Jinja templates emit BOS and neither built-in template does, and
-        // should_add_bos() is false for Hy-MT2, so prepend it by text for both.
-        let bos = vocab.bos();
-        if bos.0 >= 0 {
-            if let Some(bos_text) = vocab.text(bos).and_then(|c| c.to_str().ok()) {
-                if !bos_text.is_empty() && !prompt.starts_with(bos_text) {
-                    prompt.insert_str(0, bos_text);
-                }
-            }
-        }
-
-        let prompt_tokens = vocab.tokenize(prompt.as_bytes(), false, true);
+        // llama.cpp's plamo2 tokenizer path never inserts BOS, even with
+        // add_special, so it is prepended here.
+        let mut prompt_tokens = vec![*bos];
+        prompt_tokens.extend(vocab.tokenize(prompt.as_bytes(), false, true));
         let src_tokens = vocab.tokenize(text.as_bytes(), false, false).len();
         let n_ctx = N_CTX as usize;
-        if prompt_tokens.is_empty() || prompt_tokens.len() > n_ctx - MIN_GEN_ROOM {
+        if prompt_tokens.len() > n_ctx - MIN_GEN_ROOM {
             return Err("input too long for translation".to_owned());
         }
         let budget = max_new_tokens(src_tokens).min(n_ctx - prompt_tokens.len());
@@ -481,7 +371,8 @@ mod imp {
             .new_context(backend, ctx_params)
             .map_err(|e| format!("failed to create context: {e}"))?;
 
-        let mut sampler = build_sampler(recipe.sampling(), model.n_vocab());
+        // The model card decodes with temperature 0.
+        let mut sampler = LlamaSampler::greedy();
         let mut batch = LlamaBatch::new(prompt_tokens.len(), 1);
         batch
             .add_sequence(&prompt_tokens, 0, false)
@@ -493,10 +384,8 @@ mod imp {
         let mut emitted = 0usize;
         let mut pos = prompt_tokens.len() as i32;
         for step in 0..budget {
-            // sample() already feeds the token to the sampler chain; accepting it
-            // again would double-count it in the repetition penalty.
             let tok = sampler.sample(&ctx, batch.n_tokens() - 1);
-            if vocab.is_eog(tok) {
+            if vocab.is_eog(tok) || stop.contains(&tok) {
                 break;
             }
             let cur = acc.push(&vocab.token_to_piece(tok, false, None));
@@ -535,48 +424,23 @@ mod tests {
     }
 
     #[test]
-    fn recipe_for_arch_maps_known_archs() {
-        assert_eq!(recipe_for_arch("lfm2"), Ok(Recipe::Lfm2EnJa));
-        assert_eq!(recipe_for_arch("hunyuan-dense"), Ok(Recipe::HyMt2));
-        let err = recipe_for_arch("llama").unwrap_err();
-        assert!(err.contains("unsupported translation model architecture: llama"));
+    fn pfml3_langs() {
+        assert_eq!(pfml3_lang("eng_Latn"), Some("en"));
+        assert_eq!(pfml3_lang("jpn_Jpan"), Some("ja"));
+        assert_eq!(pfml3_lang("kor_Hang"), None);
     }
 
     #[test]
-    fn language_names() {
-        assert_eq!(language_name("eng_Latn"), Some("English"));
-        assert_eq!(language_name("jpn_Jpan"), Some("Japanese"));
-        assert_eq!(language_name("kor_Hang"), None);
-    }
-
-    #[test]
-    fn lfm2_messages() {
-        let to_ja = chat_messages(&Recipe::Lfm2EnJa, "eng_Latn", "jpn_Jpan", "Hello").unwrap();
+    fn pfml3_prompt_matches_model_card() {
+        // The model card's basic Japanese-to-English example, BOS omitted.
         assert_eq!(
-            to_ja,
-            vec![
-                ("system", "Translate to Japanese.".to_owned()),
-                ("user", "Hello".to_owned())
-            ]
+            pfml3_prompt("eng_Latn", "会議は来週の月曜日に変更されました。").unwrap(),
+            "<|plamo:tag|>dataset<|plamo:msg|>translation\
+             <|plamo:tag|>input\
+             <|plamo:msg|>会議は来週の月曜日に変更されました。\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
         );
-        let to_en = chat_messages(&Recipe::Lfm2EnJa, "jpn_Jpan", "eng_Latn", "こんにちは").unwrap();
-        assert_eq!(to_en[0], ("system", "Translate to English.".to_owned()));
-        assert_eq!(to_en[1], ("user", "こんにちは".to_owned()));
-        assert!(chat_messages(&Recipe::Lfm2EnJa, "kor_Hang", "eng_Latn", "x").is_err());
-    }
-
-    #[test]
-    fn hymt2_messages() {
-        let msgs = chat_messages(&Recipe::HyMt2, "jpn_Jpan", "eng_Latn", "こんにちは").unwrap();
-        assert_eq!(
-            msgs,
-            vec![(
-                "user",
-                "Translate the following text into English. Note that you should only output the translated result without any additional explanation:\n\nこんにちは"
-                    .to_owned()
-            )]
-        );
-        assert!(chat_messages(&Recipe::HyMt2, "eng_Latn", "kor_Hang", "x").is_err());
+        assert!(pfml3_prompt("kor_Hang", "x").is_err());
     }
 
     #[test]

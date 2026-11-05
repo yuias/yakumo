@@ -325,19 +325,21 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
     SectionTitle("Translation")
     ChoiceRow(
-      selected = mtModel == MtModel.LFM2,
+      selected = mtModel == MtModel.PLAMO3_0_8B,
       enabled = !recording && !busy,
-      title = "LFM2",
-      description = "LFM2-350M-ENJP-MT. English↔Japanese only; small and fast (~379 MB).",
-      onSelect = { selectMtModel(MtModel.LFM2) },
+      title = "PLaMo 3 Translate 0.8B",
+      description = "Small and fast (~548 MB).",
+      onSelect = { selectMtModel(MtModel.PLAMO3_0_8B) },
     )
     ChoiceRow(
-      selected = mtModel == MtModel.HYMT2,
+      selected = mtModel == MtModel.PLAMO3_2B,
       enabled = !recording && !busy,
-      title = "Hy-MT2",
-      description = "Hy-MT2-1.8B. Multilingual; larger and slower (~1.1 GB, needs more memory).",
-      onSelect = { selectMtModel(MtModel.HYMT2) },
+      title = "PLaMo 3 Translate 2B",
+      description = "More accurate; larger and slower (~1.7 GB, for devices with more RAM).",
+      onSelect = { selectMtModel(MtModel.PLAMO3_2B) },
     )
+    // Attribution required by the PLaMo Community License.
+    Text("Built with PLaMo", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
     if (mtInfo?.supported == false) {
       Text(
         "This device's CPU lacks the dot-product instructions the offline translator needs. " +

@@ -62,6 +62,12 @@ class ModelsIntegrityTest {
   }
 
   @Test
+  fun everyMtModelHasManifestEntry() {
+    val ids = manifest().models.map { it.id }
+    assertEquals(emptyList<String>(), MtModel.entries.map { it.modelId }.filter { it !in ids })
+  }
+
+  @Test
   fun noModelDirIsObsolete() {
     val m = manifest()
     val overlap = m.models.map { it.dir }.filter { it in m.obsoleteDirs }

@@ -2,7 +2,9 @@
   "obsoleteDirs": [
     "silero-vad",
     "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
-    "nllb"
+    "nllb",
+    "lfm2-350m-enjp-mt-q8_0",
+    "hy-mt2-1.8b-q4_k_m"
   ],
   "models": [
     {
@@ -43,32 +45,32 @@
       }
     },
     {
-      "id": "mt_lfm2",
-      "label": "Translation EN↔JA (LFM2-350M-ENJP-MT, Q8_0)",
-      "approxMb": 379,
-      "dir": "lfm2-350m-enjp-mt-q8_0",
-      "checkFile": "LFM2-350M-ENJP-MT-Q8_0.gguf",
+      "id": "mt_plamo3_0_8b",
+      "label": "Translation (PLaMo 3 Translate 0.8B, Q4_0)",
+      "approxMb": 548,
+      "dir": "plamo-3-translate-0.8b-q4_0",
+      "checkFile": "plamo-3-translate-0.8b-Q4_0.gguf",
       "files": [
         {
-          "name": "LFM2-350M-ENJP-MT-Q8_0.gguf",
-          "url": "https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT-GGUF/resolve/889c88c3d3681b4f342ae210a1d2a1369aba0e10/LFM2-350M-ENJP-MT-Q8_0.gguf",
-          "size": 379215648,
-          "sha256": "261dbe17e21116329b7d131865f4300e3ddfef584999c8bd90ec7e3d199cba7a"
+          "name": "plamo-3-translate-0.8b-Q4_0.gguf",
+          "url": "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/03891e907db8a43c97d3a7c75add125cc6d1f96a/plamo-3-translate-0.8b-Q4_0.gguf",
+          "size": 547532672,
+          "sha256": "2805c14de045d50f98e35e81aaf0fd23f6baa49aa8e06efcc11c46d44021bd05"
         }
       ]
     },
     {
-      "id": "mt_hymt2",
-      "label": "Translation, multilingual (Hy-MT2-1.8B, Q4_K_M)",
-      "approxMb": 1133,
-      "dir": "hy-mt2-1.8b-q4_k_m",
-      "checkFile": "Hy-MT2-1.8B-Q4_K_M.gguf",
+      "id": "mt_plamo3_2b",
+      "label": "Translation (PLaMo 3 Translate 2B, Q4_0)",
+      "approxMb": 1699,
+      "dir": "plamo-3-translate-2b-q4_0",
+      "checkFile": "plamo-3-translate-2b-Q4_0.gguf",
       "files": [
         {
-          "name": "Hy-MT2-1.8B-Q4_K_M.gguf",
-          "url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/a0c709d9fac510f2c807aa3af52872340dc37a4a/Hy-MT2-1.8B-Q4_K_M.gguf",
-          "size": 1133080448,
-          "sha256": "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699"
+          "name": "plamo-3-translate-2b-Q4_0.gguf",
+          "url": "https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/f2b4599dff9b3e45c62567eac15e83186b4cb64e/plamo-3-translate-2b-Q4_0.gguf",
+          "size": 1698566560,
+          "sha256": "7a1839ed7f315b03176a7c7bb697629a95f8c3a61e669dfdf1cbeb6471551a66"
         }
       ]
     }
